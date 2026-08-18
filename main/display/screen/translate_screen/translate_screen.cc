@@ -21,6 +21,7 @@
 #include "audio_codec.h"
 #include "audio_service.h"
 #include "board.h"
+#include "config.h"
 #include "home_screen/home_screen.h"
 #include "http.h"
 #include "screen_util.h"
@@ -41,8 +42,8 @@ constexpr int kMinPcmBytes = 80;
 constexpr int kHttpTimeoutMs = 20000;
 constexpr int kEndWaitMs = 800;
 
-constexpr int32_t kPanelW = 720;
-constexpr int32_t kPanelH = 720;
+constexpr int32_t kPanelW = DISPLAY_WIDTH;
+constexpr int32_t kPanelH = DISPLAY_HEIGHT;
 constexpr int32_t kHeaderH = 88;
 constexpr int32_t kBackBtnSize = 72;
 constexpr int32_t kFooterH = 108;
@@ -50,6 +51,9 @@ constexpr int32_t kLangRowH = 64;
 constexpr int32_t kStatusH = 36;
 constexpr int32_t kBodyH = kPanelH - kHeaderH - kFooterH;
 constexpr int32_t kHeaderSidePad = 8;
+constexpr int32_t kLangDdW = ((kPanelW - 40 - 32) / 2 < 280)
+                                  ? (kPanelW - 40 - 32) / 2
+                                  : 280;
 
 constexpr uint32_t kColorBg = 0x0E1116;
 constexpr uint32_t kColorHeaderBg = 0x12151C;
@@ -945,7 +949,7 @@ void build_body(lv_obj_t* parent) {
     lv_obj_remove_flag(lang_row, LV_OBJ_FLAG_SCROLLABLE);
 
     s_from_dd = lv_dropdown_create(lang_row);
-    lv_obj_set_size(s_from_dd, 280, 52);
+    lv_obj_set_size(s_from_dd, kLangDdW, 52);
     style_dropdown(s_from_dd);
     lv_dropdown_set_options(s_from_dd, s_lang_options.c_str());
     lv_dropdown_set_selected(s_from_dd, kDefaultFromIdx);
@@ -958,7 +962,7 @@ void build_body(lv_obj_t* parent) {
     screen_make_input_passive(arrow);
 
     s_to_dd = lv_dropdown_create(lang_row);
-    lv_obj_set_size(s_to_dd, 280, 52);
+    lv_obj_set_size(s_to_dd, kLangDdW, 52);
     style_dropdown(s_to_dd);
     lv_dropdown_set_options(s_to_dd, s_lang_options.c_str());
     lv_dropdown_set_selected(s_to_dd, kDefaultToIdx);
@@ -986,7 +990,7 @@ void build_footer(lv_obj_t* parent) {
     lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
 
-    constexpr int32_t kBtnW = 400;
+    constexpr int32_t kBtnW = (kPanelW - 48 < 400) ? kPanelW - 48 : 400;
     constexpr int32_t kBtnH = 72;
     s_action_btn = lv_button_create(footer);
     lv_obj_set_size(s_action_btn, kBtnW, kBtnH);
@@ -1033,6 +1037,7 @@ lv_obj_t* TranslateScreen::Create() {
 
     lv_obj_add_event_cb(scr, on_screen_unloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, on_swipe_back);
     return scr;
 }

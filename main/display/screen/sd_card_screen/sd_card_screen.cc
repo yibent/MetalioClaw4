@@ -2,6 +2,7 @@
 #include "i18n.h"
 
 #include "home_screen/home_screen.h"
+#include "config.h"
 #include "screen_util.h"
 
 #include <dirent.h>
@@ -25,7 +26,8 @@ LV_FONT_DECLARE(font_puhui_20_4);
 namespace {
 
 constexpr const char* TAG_SD = "SdCardScreen";
-constexpr int kPanelSize = 720;
+constexpr int kPanelW = DISPLAY_WIDTH;
+constexpr int kPanelH = DISPLAY_HEIGHT;
 constexpr int kHeaderH = 80;
 constexpr int kBackBtnSize = 72;
 constexpr int kHeaderSidePad = 16;  // 与其它页面 header 返回钮左边距一致
@@ -502,7 +504,7 @@ void BuildFileRow(const char* name, const char* path) {
     // Row container
     lv_obj_t* row = lv_obj_create(s_file_list);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, kPanelSize - 2 * kPad, LV_SIZE_CONTENT);
+    lv_obj_set_size(row, kPanelW - 2 * kPad, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_color(row, lv_color_hex(kColorFileBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(row, 12, LV_PART_MAIN);
@@ -528,7 +530,7 @@ void BuildFileRow(const char* name, const char* path) {
     lv_obj_t* name_lbl = lv_label_create(info_col);
     lv_label_set_text(name_lbl, name);
     lv_label_set_long_mode(name_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(name_lbl, 450);
+    lv_obj_set_width(name_lbl, kPanelW - 136);
     lv_obj_set_style_text_color(name_lbl, lv_color_hex(kColorTextPrimary), LV_PART_MAIN);
     lv_obj_set_style_text_font(name_lbl, &font_puhui_20_4, LV_PART_MAIN);
 
@@ -725,7 +727,7 @@ void BuildHeader(lv_obj_t* parent) {
     // 与 network / settings 等页面统一：80px header + 返回钮 LEFT_MID 左边距 16
     lv_obj_t* header = lv_obj_create(parent);
     screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelSize, kHeaderH);
+    lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -764,7 +766,7 @@ void BuildStatusSection(lv_obj_t* parent) {
     // Status indicator row (dot + text)
     lv_obj_t* status_row = lv_obj_create(parent);
     lv_obj_remove_style_all(status_row);
-    lv_obj_set_size(status_row, kPanelSize - 2 * kPad, LV_SIZE_CONTENT);
+    lv_obj_set_size(status_row, kPanelW - 2 * kPad, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_opa(status_row, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_flex_flow(status_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(status_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
@@ -811,7 +813,7 @@ void BuildStatusSection(lv_obj_t* parent) {
     lv_obj_center(s_usb_btn_lbl);
 
     s_usb_hint_lbl = lv_label_create(parent);
-    lv_obj_set_width(s_usb_hint_lbl, kPanelSize - 2 * kPad);
+    lv_obj_set_width(s_usb_hint_lbl, kPanelW - 2 * kPad);
     lv_label_set_long_mode(s_usb_hint_lbl, LV_LABEL_LONG_WRAP);
     lv_label_set_text(s_usb_hint_lbl, I18n::T("启用后电脑可将本机识别为 U 盘"));
     lv_obj_set_style_text_color(s_usb_hint_lbl, lv_color_hex(kColorTextSecondary), LV_PART_MAIN);
@@ -821,7 +823,7 @@ void BuildStatusSection(lv_obj_t* parent) {
     // Divider line
     lv_obj_t* divider = lv_obj_create(parent);
     lv_obj_remove_style_all(divider);
-    lv_obj_set_size(divider, kPanelSize - 2 * kPad, 1);
+    lv_obj_set_size(divider, kPanelW - 2 * kPad, 1);
     lv_obj_set_style_bg_color(divider, lv_color_hex(kColorFileBorder), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(divider, LV_OPA_30, LV_PART_MAIN);
     lv_obj_set_pos(divider, kPad, kDividerY);
@@ -833,7 +835,7 @@ void BuildFileListSection(lv_obj_t* parent) {
     s_path_lbl = lv_label_create(parent);
     lv_label_set_text(s_path_lbl, "/");
     lv_label_set_long_mode(s_path_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_path_lbl, kPanelSize - 2 * kPad);
+    lv_obj_set_width(s_path_lbl, kPanelW - 2 * kPad);
     lv_obj_set_style_text_color(s_path_lbl, lv_color_hex(kColorTextSecondary), LV_PART_MAIN);
     lv_obj_set_style_text_font(s_path_lbl, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_set_pos(s_path_lbl, kPad, kPathY);
@@ -846,10 +848,10 @@ void BuildFileListSection(lv_obj_t* parent) {
     lv_obj_align(s_no_files_lbl, LV_ALIGN_CENTER, 0, 40);
 
     // Scrollable file list
-    constexpr int kListH = kPanelSize - kListY - kPad;
+    constexpr int kListH = kPanelH - kListY - kPad;
     s_file_list = lv_obj_create(parent);
     lv_obj_remove_style_all(s_file_list);
-    lv_obj_set_size(s_file_list, kPanelSize - 2 * kPad, kListH);
+    lv_obj_set_size(s_file_list, kPanelW - 2 * kPad, kListH);
     lv_obj_set_pos(s_file_list, kPad, kListY);
     lv_obj_set_style_bg_opa(s_file_list, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_pad_gap(s_file_list, 8, LV_PART_MAIN);
@@ -861,7 +863,7 @@ void BuildPreviewOverlay(lv_obj_t* parent) {
     s_preview_overlay = lv_obj_create(parent);
     lv_obj_remove_style_all(s_preview_overlay);
     lv_obj_add_flag(s_preview_overlay, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(s_preview_overlay, kPanelSize, kPanelSize);
+    lv_obj_set_size(s_preview_overlay, kPanelW, kPanelH);
     lv_obj_set_pos(s_preview_overlay, 0, 0);
     lv_obj_set_style_bg_color(s_preview_overlay, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_preview_overlay, LV_OPA_COVER, LV_PART_MAIN);
@@ -873,7 +875,7 @@ void BuildPreviewOverlay(lv_obj_t* parent) {
     // header：与其它页面同一套返回钮边距
     lv_obj_t* header = lv_obj_create(s_preview_overlay);
     screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelSize, kHeaderH);
+    lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -902,7 +904,7 @@ void BuildPreviewOverlay(lv_obj_t* parent) {
     lv_label_set_long_mode(s_preview_title, LV_LABEL_LONG_DOT);
     // 返回钮右侧到右边缘留 16 边距
     lv_obj_set_width(s_preview_title,
-                     kPanelSize - (kHeaderSidePad + kBackBtnSize + kHeaderSidePad) -
+                     kPanelW - (kHeaderSidePad + kBackBtnSize + kHeaderSidePad) -
                          kHeaderSidePad);
     lv_obj_set_style_text_color(s_preview_title, lv_color_hex(kColorTextPrimary),
                                 LV_PART_MAIN);
@@ -913,7 +915,7 @@ void BuildPreviewOverlay(lv_obj_t* parent) {
 
     // 图片预览（全屏居中）
     s_preview_img = lv_image_create(s_preview_overlay);
-    lv_obj_set_size(s_preview_img, kPanelSize, kPanelSize - kHeaderH);
+    lv_obj_set_size(s_preview_img, kPanelW, kPanelH - kHeaderH);
     lv_obj_align(s_preview_img, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_image_set_inner_align(s_preview_img, LV_IMAGE_ALIGN_CONTAIN);
     lv_obj_remove_flag(s_preview_img, LV_OBJ_FLAG_CLICKABLE);
@@ -922,8 +924,8 @@ void BuildPreviewOverlay(lv_obj_t* parent) {
     // 文本预览（可上下滚动）
     s_preview_text_scroll = lv_obj_create(s_preview_overlay);
     lv_obj_remove_style_all(s_preview_text_scroll);
-    lv_obj_set_size(s_preview_text_scroll, kPanelSize - 2 * kPad,
-                    kPanelSize - kHeaderH - kPad);
+    lv_obj_set_size(s_preview_text_scroll, kPanelW - 2 * kPad,
+                    kPanelH - kHeaderH - kPad);
     lv_obj_set_pos(s_preview_text_scroll, kPad, kHeaderH);
     lv_obj_set_style_bg_opa(s_preview_text_scroll, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_scroll_dir(s_preview_text_scroll, LV_DIR_VER);
@@ -933,7 +935,7 @@ void BuildPreviewOverlay(lv_obj_t* parent) {
     screen_swipe_back_ignore(s_preview_text_scroll, true);
 
     s_preview_text_lbl = lv_label_create(s_preview_text_scroll);
-    lv_obj_set_width(s_preview_text_lbl, kPanelSize - 2 * kPad);
+    lv_obj_set_width(s_preview_text_lbl, kPanelW - 2 * kPad);
     lv_label_set_long_mode(s_preview_text_lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(s_preview_text_lbl, lv_color_hex(kColorTextPrimary),
                                 LV_PART_MAIN);
@@ -1007,6 +1009,7 @@ void UpdateStatusUI() {
 
 lv_obj_t* SdCardScreen::Create() {
     lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     s_screen = scr;
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
@@ -1034,6 +1037,7 @@ lv_obj_t* SdCardScreen::Create() {
     RebuildFileList(scr);
 
     // Right-swipe：子目录上一级，根目录回首页
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
 
     return scr;

@@ -12,6 +12,7 @@
 #include <soc/soc.h>
 
 #include "board.h"
+#include "config.h"
 #include "home_screen/home_screen.h"
 #include "screen_util.h"
 #include "system_info.h"
@@ -23,7 +24,8 @@ namespace {
 
 constexpr const char* TAG = "InfoScreen";
 
-constexpr int kPanelSize = 720;
+constexpr int kPanelW = DISPLAY_WIDTH;
+constexpr int kPanelH = DISPLAY_HEIGHT;
 constexpr int kHeaderH = 90;
 constexpr int kBackBtnSize = 72;
 constexpr int kPad = 16;
@@ -164,7 +166,7 @@ void OnScreenUnloaded(lv_event_t* /*e*/) { s_ui.screen = nullptr; }
 void BuildHeader(lv_obj_t* parent) {
     lv_obj_t* header = lv_obj_create(parent);
     screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelSize, kHeaderH);
+    lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -230,7 +232,7 @@ void BuildInfoList(lv_obj_t* parent) {
 
     lv_obj_t* list = lv_obj_create(parent);
     screen_strip_obj_chrome(list);
-    lv_obj_set_size(list, kPanelSize - 2 * kPad, kPanelSize - kHeaderH - kPad);
+    lv_obj_set_size(list, kPanelW - 2 * kPad, kPanelH - kHeaderH - kPad);
     lv_obj_set_pos(list, kPad, kHeaderH);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
@@ -250,7 +252,7 @@ lv_obj_t* InfoScreen::Create() {
     lv_obj_t* scr = lv_obj_create(nullptr);
     s_ui.screen = scr;
     screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelSize, kPanelSize);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -258,6 +260,7 @@ lv_obj_t* InfoScreen::Create() {
     BuildHeader(scr);
     BuildInfoList(scr);
 
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
 

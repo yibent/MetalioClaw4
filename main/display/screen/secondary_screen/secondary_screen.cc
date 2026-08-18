@@ -2,6 +2,7 @@
 
 #include <cstdio>
 
+#include "board_hardware.h"
 #include "config.h"
 #include "esp_lcd_touch.h"
 #include "esp_log.h"
@@ -16,15 +17,14 @@
 #include "usb_extend_prefs.h"
 #include "usb_extend_screen.h"
 
-extern "C" esp_lcd_touch_handle_t metalio_claw_4_get_touch(void);
-
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_30_4);
 
 namespace {
 
 constexpr const char* TAG = "SecondaryScreen";
-constexpr int kPanelSize = DISPLAY_WIDTH;
+constexpr int kPanelW = DISPLAY_WIDTH;
+constexpr int kPanelH = DISPLAY_HEIGHT;
 constexpr int kHeaderH = 90;
 constexpr int kBackBtnSize = 72;
 constexpr int kHeaderSidePad = 16;
@@ -34,9 +34,9 @@ constexpr int kBtnH = 72;
 constexpr int kFooterPad = 16;
 constexpr int kStatusAreaH = 48;
 constexpr int kFooterH = kFooterPad + kStatusAreaH + 8 + kBtnH + kFooterPad;
-constexpr int kBodyH = kPanelSize - kHeaderH;
+constexpr int kBodyH = kPanelH - kHeaderH;
 constexpr int kTabViewH = kBodyH - kFooterH;
-constexpr int kContentW = kPanelSize - kSidePad * 2;
+constexpr int kContentW = kPanelW - kSidePad * 2;
 
 constexpr uint32_t kColorBg = 0x101418;
 constexpr uint32_t kColorTabBar = 0x12151C;
@@ -141,7 +141,7 @@ void RefreshUi() {
 void OnStoppedUi(void* /*ctx*/) {
     auto fn = [](void*) {
         if (esp_lv_adapter_lock(-1) == ESP_OK) {
-            esp_lcd_touch_handle_t tp = metalio_claw_4_get_touch();
+            esp_lcd_touch_handle_t tp = board_get_touch();
             if (tp != nullptr) {
                 touch_feed_init(tp, 40);
             }
@@ -289,7 +289,7 @@ void BuildMainTab(lv_obj_t* tab) {
              "安装驱动后用 USB 连接电脑，点击下方开启；在 Windows「显示设置」中选择"
              "「扩展」。支持触摸，支持播放电脑声音。",
              false);
-    add_step("4", "分辨率 720×720。开启后短按电源键可退出副屏。", true);
+    add_step("4", "分辨率与当前主屏一致。开启后短按电源键可退出副屏。", true);
 }
 
 void BuildSettingsTab(lv_obj_t* tab) {
@@ -321,7 +321,7 @@ void BuildSettingsTab(lv_obj_t* tab) {
 void BuildHeader(lv_obj_t* parent) {
     lv_obj_t* header = lv_obj_create(parent);
     screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelSize, kHeaderH);
+    lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -361,7 +361,7 @@ void BuildHeader(lv_obj_t* parent) {
 void BuildFooter(lv_obj_t* parent) {
     lv_obj_t* footer = lv_obj_create(parent);
     screen_strip_obj_chrome(footer);
-    lv_obj_set_size(footer, kPanelSize, kFooterH);
+    lv_obj_set_size(footer, kPanelW, kFooterH);
     lv_obj_set_pos(footer, 0, kHeaderH + kTabViewH);
     lv_obj_set_style_bg_color(footer, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, LV_PART_MAIN);
@@ -400,7 +400,7 @@ void BuildFooter(lv_obj_t* parent) {
 void BuildTabView(lv_obj_t* parent) {
     lv_obj_t* tv = lv_tabview_create(parent);
     s_ui.tabview = tv;
-    lv_obj_set_size(tv, kPanelSize, kTabViewH);
+    lv_obj_set_size(tv, kPanelW, kTabViewH);
     lv_obj_set_pos(tv, 0, kHeaderH);
     lv_tabview_set_tab_bar_position(tv, LV_DIR_TOP);
     lv_tabview_set_tab_bar_size(tv, kTabBarH);
@@ -447,7 +447,7 @@ void OnUnload(lv_event_t* e) {
 
 lv_obj_t* SecondaryScreen::Create() {
     lv_obj_t* scr = lv_obj_create(nullptr);
-    lv_obj_set_size(scr, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -461,6 +461,9 @@ lv_obj_t* SecondaryScreen::Create() {
     usb_extend_screen_set_stopped_cb(OnStoppedUi, nullptr);
     RefreshUi();
 
+    // This page is authored directly for DISPLAY_WIDTH x DISPLAY_HEIGHT;
+    // screen_attach_swipe_back() must not treat it as a 720x720 legacy app.
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, NavigateHome);
     lv_obj_add_event_cb(scr, OnUnload, LV_EVENT_SCREEN_UNLOADED, nullptr);
     return scr;
@@ -474,7 +477,7 @@ void SecondaryScreen::LifecycleCallback(screen_lifecycle_event_t event) {
         if (usb_extend_screen_is_running()) {
             usb_extend_screen_stop();
         }
-        esp_lcd_touch_handle_t tp = metalio_claw_4_get_touch();
+        esp_lcd_touch_handle_t tp = board_get_touch();
         if (tp != nullptr) {
             touch_feed_init(tp, 40);
         }

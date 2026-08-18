@@ -1,6 +1,6 @@
 /*
  * P4 JPEG hardware decode + MIPI DPI framebuffers (RGB888).
- * Reuses the already-initialized metalio panel (no BSP re-init).
+ * Reuses an already-initialized compatible board panel (no BSP re-init).
  */
 #include <string.h>
 
@@ -15,13 +15,12 @@
 #include "freertos/semphr.h"
 
 #include "app_lcd.h"
+#include "board_hardware.h"
 #include "sdkconfig.h"
 
 #if __has_include("config.h")
 #include "config.h"
 #endif
-
-extern esp_lcd_panel_handle_t metalio_claw_4_get_panel(void);
 
 static const char* TAG = "app_lcd";
 
@@ -73,7 +72,14 @@ esp_err_t app_lcd_init(void) {
         return ESP_OK;
     }
 
-    s_panel = metalio_claw_4_get_panel();
+#if CONFIG_BOARD_TYPE_FANGTANG_JC4880P443
+    // This path currently assumes a 720x720 RGB888 panel with three frame
+    // buffers. The Fangtang panel is 480x800 RGB565 with two frame buffers.
+    ESP_LOGW(TAG, "USB extend screen is not supported by this panel configuration");
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+
+    s_panel = board_get_panel();
     ESP_RETURN_ON_FALSE(s_panel != NULL, ESP_ERR_INVALID_STATE, TAG, "panel null");
 
 #if EXAMPLE_LCD_H_RES != DISPLAY_WIDTH || EXAMPLE_LCD_V_RES != DISPLAY_HEIGHT

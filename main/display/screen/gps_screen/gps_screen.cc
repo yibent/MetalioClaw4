@@ -7,6 +7,7 @@
 #include "dual_network_board.h"
 #include "gps_service.h"
 #include "home_screen/home_screen.h"
+#include "config.h"
 #include "lvgl_image.h"
 #include "nt26_board.h"
 #include "screen_util.h"
@@ -53,8 +54,9 @@ constexpr const char* TAG = "GpsScreen";
 // 基站：AT+ECBCINFO + POST /location/report/cell（accesstype=0）
 // ---------------------------------------------------------------------------
 
-constexpr int32_t kPanelSize       = 720;
-constexpr int32_t kCardWidth       = 672;
+constexpr int32_t kPanelW          = DISPLAY_WIDTH;
+constexpr int32_t kPanelH          = DISPLAY_HEIGHT;
+constexpr int32_t kCardWidth       = kPanelW - 32;
 // kCardHeight 历史：本来按「header + 7 InfoRow + 1 地址行」的精确高度算
 // 出 624，理论上正好够。但 LVGL 9 的 flex column 在「最后一个子元素
 // LV_SIZE_CONTENT 且父容器空间紧贴临界」时偶尔会把最后那个 wrap 推到
@@ -82,7 +84,7 @@ constexpr int32_t kHeaderH         = 90;
 constexpr int32_t kBackBtnSize     = 72;
 constexpr int32_t kTabBarH         = 56;
 constexpr int32_t kMapToolbarH     = 56;
-constexpr int32_t kMapImageSize    = 672;
+constexpr int32_t kMapImageSize    = kPanelW - 32;
 constexpr int      kMinZoom         = 3;
 constexpr int      kMaxZoom         = 18;
 constexpr int      kDefaultZoom     = 18;
@@ -237,7 +239,7 @@ struct MapViewParams {
 
 int32_t CalcMapStagePixelSize() {
     const int32_t stage_y = kHeaderH + kMapToolbarH + 20;
-    const int32_t stage_h = kPanelSize - stage_y - 12;
+    const int32_t stage_h = kPanelH - stage_y - 12;
     return std::min<int32_t>(kMapImageSize, stage_h);
 }
 
@@ -2101,7 +2103,7 @@ void OpenMockDialog() {
     lv_obj_t* mask = lv_obj_create(s_state.screen);
     screen_strip_obj_chrome(mask);
     lv_obj_add_flag(mask, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(mask, kPanelSize, kPanelSize);
+    lv_obj_set_size(mask, kPanelW, kPanelH);
     lv_obj_set_pos(mask, 0, 0);
     lv_obj_set_style_bg_color(mask, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(mask, LV_OPA_70, LV_PART_MAIN);
@@ -2109,7 +2111,7 @@ void OpenMockDialog() {
     lv_obj_add_flag(mask, LV_OBJ_FLAG_CLICKABLE);
     s_state.mock_dlg.mask = mask;
 
-    constexpr int32_t kCardW = kPanelSize - 60;
+    constexpr int32_t kCardW = kPanelW - 60;
     constexpr int32_t kCardH = 380;  // 比 Key 弹框高，多放一个 textarea + 状态行
     lv_obj_t* card = lv_obj_create(mask);
     screen_strip_obj_chrome(card);
@@ -2240,10 +2242,10 @@ void OpenMockDialog() {
 
     // 数字键盘：默认绑定到纬度框。LV_KEYBOARD_MODE_NUMBER 自带 0-9、
     // 小数点和负号，正好够输入十进制度。
-    constexpr int32_t kKbH = kPanelSize - kCardH - 24 - 12;
+    constexpr int32_t kKbH = kPanelH - kCardH - 24 - 12;
     lv_obj_t* kb = lv_keyboard_create(mask);
     s_state.mock_dlg.keyboard = kb;
-    lv_obj_set_size(kb, kPanelSize, kKbH);
+    lv_obj_set_size(kb, kPanelW, kKbH);
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_NUMBER);
     StyleDarkKeyboard(kb);
@@ -2519,7 +2521,7 @@ void BuildMapWindow(lv_obj_t* scr) {
     s_map_win.overlay = overlay;
     screen_strip_obj_chrome(overlay);
     lv_obj_add_flag(overlay, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(overlay, kPanelSize, kPanelSize);
+    lv_obj_set_size(overlay, kPanelW, kPanelH);
     lv_obj_set_pos(overlay, 0, 0);
     lv_obj_set_style_bg_color(overlay, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(overlay, LV_OPA_COVER, LV_PART_MAIN);
@@ -2528,7 +2530,7 @@ void BuildMapWindow(lv_obj_t* scr) {
 
     lv_obj_t* header = lv_obj_create(overlay);
     screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelSize, kHeaderH);
+    lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
 
@@ -2629,10 +2631,10 @@ void BuildMapWindow(lv_obj_t* scr) {
 }
 
 void BuildTabView(lv_obj_t* scr) {
-    const int32_t content_h = kPanelSize - kHeaderH;
+    const int32_t content_h = kPanelH - kHeaderH;
     lv_obj_t* tv = lv_tabview_create(scr);
     s_state.tabview = tv;
-    lv_obj_set_size(tv, kPanelSize, content_h);
+    lv_obj_set_size(tv, kPanelW, content_h);
     lv_obj_set_pos(tv, 0, kHeaderH);
     lv_tabview_set_tab_bar_position(tv, LV_DIR_TOP);
     lv_tabview_set_tab_bar_size(tv, kTabBarH);
@@ -2690,7 +2692,7 @@ lv_obj_t* GpsScreen::Create() {
                                    LV_PART_MAIN);
     lv_obj_set_style_bg_grad_dir(scr, LV_GRAD_DIR_VER, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_size(scr, kPanelSize, kPanelSize);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
 
     // ---------------- Header（顶部 56px：返回按钮 + "定位" 标题） ----------------
     // 透明 header 容器铺满 720xkHeaderH，本身不绘制底色（让屏幕背景透出
@@ -2698,7 +2700,7 @@ lv_obj_t* GpsScreen::Create() {
     // 列，跟 network_screen 一致。
     lv_obj_t* header = lv_obj_create(scr);
     screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelSize, kHeaderH);
+    lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -2742,6 +2744,7 @@ lv_obj_t* GpsScreen::Create() {
     //   - Content 容器是竖向滚动，本身不吃横向手势，不需要 ignore
     //   - 模拟弹框打开时由 GoBackToHome() 内部分支保护
     //   - Dropdown list 在弹出时单独打 ignore（见 OnMapZoomDdListOpened）
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
     return scr;
 }

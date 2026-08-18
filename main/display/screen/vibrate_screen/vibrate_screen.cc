@@ -10,6 +10,7 @@
 #include "driver/ledc.h"
 
 #include "home_screen/home_screen.h"
+#include "config.h"
 #include "screen_util.h"
 
 LV_FONT_DECLARE(font_puhui_20_4);
@@ -325,8 +326,9 @@ void on_screen_unloaded(lv_event_t* /*e*/) {
 lv_obj_t* VibrateScreen::Create() {
     ledc_init_once();
 
-    constexpr int kPanelW = 720;
-    constexpr int kPanelH = 720;
+    constexpr int kPanelW = DISPLAY_WIDTH;
+    constexpr int kPanelH = DISPLAY_HEIGHT;
+    constexpr int kSidePad = (kPanelW >= 660) ? 30 : 24;
 
     lv_obj_t* scr = lv_obj_create(nullptr);
     s_ui.screen   = scr;
@@ -373,8 +375,8 @@ lv_obj_t* VibrateScreen::Create() {
     // ---------------- 大数显（百分比） ----------------
     lv_obj_t* card = lv_obj_create(scr);
     screen_strip_obj_chrome(card);
-    lv_obj_set_size(card, 660, 220);
-    lv_obj_set_pos(card, 30, 100);
+    lv_obj_set_size(card, kPanelW - 2 * kSidePad, 220);
+    lv_obj_set_pos(card, kSidePad, 100);
     lv_obj_set_style_bg_color(card, lv_color_hex(0x1B2030), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(card, 28, LV_PART_MAIN);
@@ -402,7 +404,7 @@ lv_obj_t* VibrateScreen::Create() {
     constexpr int kSliderY = 350;
     lv_obj_t* slider = lv_slider_create(scr);
     s_ui.slider = slider;
-    lv_obj_set_size(slider, 600, 36);
+    lv_obj_set_size(slider, (kPanelW - 48 < 600) ? kPanelW - 48 : 600, 36);
     lv_obj_align(slider, LV_ALIGN_TOP_MID, 0, kSliderY);
     lv_slider_set_range(slider, 0, 100);
     lv_slider_set_value(slider, 0, LV_ANIM_OFF);
@@ -425,13 +427,15 @@ lv_obj_t* VibrateScreen::Create() {
     constexpr int kButtonsRowH = 80;
     constexpr int kButtonsGap  = 16;
     constexpr int kButtonsCols = 3;
-    constexpr int kButtonW = (kPanelW - 60 - (kButtonsCols - 1) * kButtonsGap) / kButtonsCols;
+    constexpr int kButtonW = (kPanelW - 2 * kSidePad -
+                               (kButtonsCols - 1) * kButtonsGap) /
+                              kButtonsCols;
     constexpr int kButtonsTop = 460;
 
     for (int i = 0; i < kPresetCount; i++) {
         const int row = i / kButtonsCols;
         const int col = i % kButtonsCols;
-        int x = 30 + col * (kButtonW + kButtonsGap);
+        int x = kSidePad + col * (kButtonW + kButtonsGap);
         int y = kButtonsTop + row * (kButtonsRowH + kButtonsGap);
 
         lv_obj_t* btn = lv_button_create(scr);
@@ -461,9 +465,10 @@ lv_obj_t* VibrateScreen::Create() {
     refresh_preset_buttons();
     apply_duty_pct(0);
 
-    screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, on_screen_unloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);
+    screen_mark_native_layout(scr);
+    screen_attach_swipe_back(scr, OnSwipeBack);
 
     return scr;
 }

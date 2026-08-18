@@ -7,6 +7,7 @@
 
 #include "backlight.h"
 #include "board.h"
+#include "config.h"
 #include "home_screen/home_screen.h"
 #include "screen_util.h"
 #include "settings.h"
@@ -19,9 +20,12 @@ namespace {
 
 constexpr const char* TAG = "BacklightScreen";
 
-constexpr int kPanelSize = 720;
+constexpr int kPanelW = DISPLAY_WIDTH;
+constexpr int kPanelH = DISPLAY_HEIGHT;
 constexpr int kHeaderH = 90;
 constexpr int kBackBtnSize = 72;
+constexpr int kSidePad = (kPanelW >= 660) ? 30 : 24;
+constexpr int kCardW = kPanelW - 2 * kSidePad;
 
 struct UiState {
     lv_obj_t* screen = nullptr;
@@ -142,14 +146,14 @@ lv_obj_t* BacklightScreen::Create() {
     lv_obj_t* scr = lv_obj_create(nullptr);
     s_ui.screen = scr;
     screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelSize, kPanelSize);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x0E1116), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* header = lv_obj_create(scr);
     screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelSize, kHeaderH);
+    lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -180,8 +184,8 @@ lv_obj_t* BacklightScreen::Create() {
 
     lv_obj_t* card = lv_obj_create(scr);
     screen_strip_obj_chrome(card);
-    lv_obj_set_size(card, 660, 220);
-    lv_obj_set_pos(card, 30, 110);
+    lv_obj_set_size(card, kCardW, 220);
+    lv_obj_set_pos(card, kSidePad, kHeaderH + 20);
     lv_obj_set_style_bg_color(card, lv_color_hex(0x1B2030), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(card, 28, LV_PART_MAIN);
@@ -206,8 +210,8 @@ lv_obj_t* BacklightScreen::Create() {
 
     lv_obj_t* slider_row = lv_obj_create(scr);
     lv_obj_remove_style_all(slider_row);
-    lv_obj_set_size(slider_row, 660, LV_SIZE_CONTENT);
-    lv_obj_set_pos(slider_row, 30, 360);
+    lv_obj_set_size(slider_row, kCardW, LV_SIZE_CONTENT);
+    lv_obj_set_pos(slider_row, kSidePad, kHeaderH + 270);
     lv_obj_set_flex_flow(slider_row, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(slider_row, 12, LV_PART_MAIN);
     lv_obj_set_style_pad_bottom(slider_row, 18, LV_PART_MAIN);
@@ -244,6 +248,7 @@ lv_obj_t* BacklightScreen::Create() {
     lv_obj_set_style_text_font(foot, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_align(foot, LV_ALIGN_BOTTOM_MID, 0, -40);
 
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
 

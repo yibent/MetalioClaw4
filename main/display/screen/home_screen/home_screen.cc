@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cctype>
 #include <ctime>
+#include <algorithm>
 #include <string>
 #include <esp_log.h>
 #include <esp_ota_ops.h>
@@ -306,44 +307,104 @@ void secondary_screen_lifecycle_cb(screen_lifecycle_event_t event) {
     SecondaryScreen::LifecycleCallback(event);
 }
 
-constexpr int kPanelSize = 720;
-constexpr int kStatusBarHeight = 48;      
-constexpr int kIndicatorAreaHeight = 40;  
-constexpr int kPagerHeight =
-    kPanelSize - kStatusBarHeight - kIndicatorAreaHeight;  // 632
 constexpr int kAppsPerPage = 9;           // 3x3
 constexpr int kPageCols = 3;
 constexpr int kPageRows = 3;
-constexpr int kIconSize = 128;            // 图标边长；下方再留名称
-constexpr int kCellWidth = 160;
-constexpr int kNameGap = 6;
-constexpr int kNameAreaH = 24;            // font_puhui_20_4 一行高度
-constexpr int kCellHeight = kIconSize + kNameGap + kNameAreaH;  // 158
-constexpr int kGridColGap = 60;
-constexpr int kGridRowGap = 36;
-constexpr int kPagePadHor =
-    (kPanelSize - kPageCols * kCellWidth - (kPageCols - 1) * kGridColGap) / 2;
-constexpr int kPagePadVer =
-    (kPagerHeight - kPageRows * kCellHeight - (kPageRows - 1) * kGridRowGap) / 2;
+
+// HomeScreen used to assume a square 720 px panel. Keep all geometry in one
+// runtime layout so the same screen can be built for the Fangtang 480x800
+// portrait display without leaving pager/overlay dimensions at 720x720.
+struct HomeLayout {
+    int panel_width = 720;
+    int panel_height = 720;
+    int status_bar_height = 48;
+    int indicator_area_height = 40;
+    int pager_height = 632;
+    int icon_size = 128;
+    int cell_width = 160;
+    int name_gap = 6;
+    int name_area_height = 24;
+    int cell_height = 158;
+    int grid_col_gap = 60;
+    int grid_row_gap = 36;
+    int page_pad_hor = 18;
+    int page_pad_ver = 79;
+    int page_snap_threshold = 144;
+    int status_left_width = 300;
+    int status_right_width = 400;
+    int32_t col_dsc[kPageCols + 1] = {160, 160, 160, LV_GRID_TEMPLATE_LAST};
+    int32_t row_dsc[kPageRows + 1] = {158, 158, 158, LV_GRID_TEMPLATE_LAST};
+};
+
+HomeLayout s_home_layout;
+
+HomeLayout& Layout() { return s_home_layout; }
+
+void ConfigureHomeLayout() {
+    const int width = std::max(1, static_cast<int>(LV_HOR_RES));
+    const int height = std::max(1, static_cast<int>(LV_VER_RES));
+    HomeLayout& l = Layout();
+    l.panel_width = width;
+    l.panel_height = height;
+
+    const int scale = std::max(55, std::min(100, width * 100 / 720));
+    auto scaled = [scale](int value, int minimum) {
+        return std::max(minimum, value * scale / 100);
+    };
+
+    l.status_bar_height = scaled(48, 40);
+    l.indicator_area_height = scaled(40, 32);
+    l.pager_height = std::max(1, height - l.status_bar_height - l.indicator_area_height);
+    // SPNG is a split image format and LVGL cannot scale it at draw time.
+    // The resource preparation step encodes home icons at this board-specific
+    // size, shared through DESKTOP_APP_ICON_SIZE from CMake.
+    l.icon_size = DESKTOP_APP_ICON_SIZE;
+    l.cell_width = scaled(160, 112);
+    l.name_gap = scaled(6, 4);
+    l.name_area_height = width < 600 ? 48 : scaled(24, 20);
+    l.cell_height = l.icon_size + l.name_gap + l.name_area_height;
+    l.grid_col_gap = scaled(60, 16);
+    l.grid_row_gap = scaled(36, 18);
+
+    // Keep the 3-column grid inside the actual panel even on narrow displays.
+    const int grid_width = kPageCols * l.cell_width + (kPageCols - 1) * l.grid_col_gap;
+    if (grid_width > width) {
+        l.cell_width = std::max(72, (width - (kPageCols - 1) * l.grid_col_gap) / kPageCols);
+        l.icon_size = std::min(l.icon_size, l.cell_width);
+        l.cell_height = l.icon_size + l.name_gap + l.name_area_height;
+    }
+    l.page_pad_hor = std::max(0, (width - kPageCols * l.cell_width -
+                                  (kPageCols - 1) * l.grid_col_gap) / 2);
+    if (height > width) {
+        const int spread_row_gap =
+            (l.pager_height - kPageRows * l.cell_height - 80) / (kPageRows - 1);
+        l.grid_row_gap = std::max(l.grid_row_gap, std::min(64, spread_row_gap));
+    }
+    const int grid_height = kPageRows * l.cell_height + (kPageRows - 1) * l.grid_row_gap;
+    l.page_pad_ver = std::max(0, (l.pager_height - grid_height) / 2);
+    l.page_snap_threshold = std::max(1, width / 5);
+
+    // The status bar contains two fixed flex children. Scale their widths so
+    // the 480 px variant cannot push the battery text off the right edge.
+    l.status_left_width = width >= 700 ? 300 : width * 42 / 100;
+    l.status_right_width = std::max(1, width - l.status_left_width - 20);
+
+    for (int i = 0; i < kPageCols; ++i) {
+        l.col_dsc[i] = l.cell_width;
+    }
+    l.col_dsc[kPageCols] = LV_GRID_TEMPLATE_LAST;
+    for (int i = 0; i < kPageRows; ++i) {
+        l.row_dsc[i] = l.cell_height;
+    }
+    l.row_dsc[kPageRows] = LV_GRID_TEMPLATE_LAST;
+
+    ESP_LOGI(TAG_HOME, "layout: %dx%d, pager=%d, icon=%d, cell=%dx%d",
+             l.panel_width, l.panel_height, l.pager_height, l.icon_size,
+             l.cell_width, l.cell_height);
+}
 
 constexpr uint32_t kStatusBarBg = 0x000000;
 constexpr int kMaxPages = 6;  // hard cap; bump if app list grows
-
-// Grid descriptors -- static so the array pointers passed to LVGL outlive
-// the call.  Initialized at namespace scope; LVGL reads them lazily during
-// each page's relayout, so we never have to refresh them.
-int32_t s_col_dsc[kPageCols + 1] = {
-    kCellWidth,
-    kCellWidth,
-    kCellWidth,
-    LV_GRID_TEMPLATE_LAST,
-};
-int32_t s_row_dsc[kPageRows + 1] = {
-    kCellHeight,
-    kCellHeight,
-    kCellHeight,
-    LV_GRID_TEMPLATE_LAST,
-};
 
 // Indicator dot geometry
 constexpr int kDotSize = 8;
@@ -683,13 +744,13 @@ void ShowEspClawSwitchPopup() {
     CloseEspClawPopup();
     s_espclaw_switching = true;
 
-    constexpr int kCardW = 520;
-    constexpr int kCardH = 320;
+    const int kCardW = std::min(520, static_cast<int>(LV_HOR_RES) - 32);
+    const int kCardH = std::min(320, static_cast<int>(LV_VER_RES) - 64);
 
     lv_obj_t* mask = lv_obj_create(scr);
     lv_obj_remove_style_all(mask);
     lv_obj_add_flag(mask, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(mask, kPanelSize, kPanelSize);
+    lv_obj_set_size(mask, LV_HOR_RES, LV_VER_RES);
     lv_obj_set_pos(mask, 0, 0);
     lv_obj_set_style_bg_color(mask, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(mask, LV_OPA_80, LV_PART_MAIN);
@@ -874,7 +935,6 @@ void EnsureIconPathsBuilt() {
 
 constexpr int kHomeMoveThreshold = 5;       // 滑动激活 / 点击位移上限（|dx|、|dy| 均 < 此值才算 tap）
 constexpr int kHomeAxisLockThreshold = 12;  // 消抖：主方向位移超过此值才锁定手势
-constexpr int kPageSnapThreshold = kPanelSize / 5;  // 跟手拖动超过 20% 页宽即切页（720→144px）
 constexpr int kHomeFlickThreshold = 24;       // 松手快速 fling 位移阈值
 constexpr uint32_t kHomeLongPressMs = 750;  // 按下→松开 ≥ 此值且位移够小 → 长按
 constexpr uint32_t kPageSlideAnimMs = 300;  // 左右翻页吸附动画时长
@@ -1025,7 +1085,7 @@ lv_obj_t* CreateAppCellSkeleton(lv_obj_t* cell) {
 
     lv_obj_t* skeleton = lv_obj_create(cell);
     lv_obj_remove_style_all(skeleton);
-    lv_obj_set_size(skeleton, kIconSize, kIconSize);
+    lv_obj_set_size(skeleton, Layout().icon_size, Layout().icon_size);
     lv_obj_set_style_bg_color(skeleton, lv_color_hex(kSkeletonBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(skeleton, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(skeleton, 0, LV_PART_MAIN);
@@ -1041,7 +1101,7 @@ lv_obj_t* CreateAppCellSkeleton(lv_obj_t* cell) {
 lv_obj_t* CreateAppCell(lv_obj_t* parent, const AppEntry& entry, int idx) {
     lv_obj_t* cell = lv_obj_create(parent);
     lv_obj_remove_style_all(cell);
-    lv_obj_set_size(cell, kCellWidth, kCellHeight);
+    lv_obj_set_size(cell, Layout().cell_width, Layout().cell_height);
     lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(cell, 0, LV_PART_MAIN);
 
@@ -1054,16 +1114,16 @@ lv_obj_t* CreateAppCell(lv_obj_t* parent, const AppEntry& entry, int idx) {
     lv_obj_set_style_transition(cell, &GetPressTransition(), LV_PART_MAIN);
 
     // 缩放绕图标中心；仅在 screen 确认 Click / LongPress 后 add_state(PRESSED)。
-    lv_obj_set_style_transform_pivot_x(cell, kCellWidth / 2,
+    lv_obj_set_style_transform_pivot_x(cell, Layout().cell_width / 2,
                                        LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_transform_pivot_y(cell, kIconSize / 2,
+    lv_obj_set_style_transform_pivot_y(cell, Layout().icon_size / 2,
                                        LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_transform_scale(cell, 262, LV_PART_MAIN | LV_STATE_PRESSED);
 
     // 路径取自 s_icon_paths[idx]：已按当前主题前缀解析好（ic_app_home_themeN_xxx）。
     lv_obj_t* icon = lv_image_create(cell);
     lv_image_set_src(icon, s_icon_paths[idx]);
-    lv_obj_set_size(icon, kIconSize, kIconSize);
+    lv_obj_set_size(icon, Layout().icon_size, Layout().icon_size);
     lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_remove_flag(icon, LV_OBJ_FLAG_CLICKABLE);
 
@@ -1072,12 +1132,15 @@ lv_obj_t* CreateAppCell(lv_obj_t* parent, const AppEntry& entry, int idx) {
 
     lv_obj_t* name = lv_label_create(cell);
     lv_label_set_text(name, entry.name != nullptr ? I18n::T(entry.name) : "");
-    lv_obj_set_width(name, kCellWidth);
-    lv_label_set_long_mode(name, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(name, Layout().cell_width);
+    lv_obj_set_height(name, Layout().name_area_height);
+    lv_label_set_long_mode(name, Layout().name_area_height > 24
+                                      ? LV_LABEL_LONG_WRAP
+                                      : LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(name, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_set_style_text_color(name, lv_color_hex(0xE5E7EB), LV_PART_MAIN);
     lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(name, LV_ALIGN_TOP_MID, 0, kIconSize + kNameGap);
+    lv_obj_align(name, LV_ALIGN_TOP_MID, 0, Layout().icon_size + Layout().name_gap);
     lv_obj_remove_flag(name, LV_OBJ_FLAG_CLICKABLE);
 
     if (entry.launch != nullptr) {
@@ -1093,9 +1156,9 @@ lv_obj_t* CreateAppCell(lv_obj_t* parent, const AppEntry& entry, int idx) {
 // Pager + page-indicator
 //
 // Layout
-//   pager (720 x kPagerHeight) -- horizontal scroll, snap to page center.
-//     each child is a Page object (also 720 x kPagerHeight) which holds a
-//     3x3 grid of cells.  We mark every page LV_OBJ_FLAG_SNAPPABLE so a
+//   pager (panel width x runtime pager height) -- horizontal scroll, snap to
+//     page center. Each child is a Page object with the same runtime size and
+//     a 3x3 grid of cells. We mark every page LV_OBJ_FLAG_SNAPPABLE so a
 //     swipe ends with one page perfectly centered.
 //
 // State
@@ -1203,8 +1266,13 @@ void SetPagerSkeletonMode(PagerState* state, bool active) {
 void UpdateHomeStatusBar(HomeStatusState* st);
 
 int GetSavedNetworkType() {
-    // 与 DualNetworkBoard / network_screen 共用 NVS 读取逻辑
-    constexpr int kDefaultNetType = 1;  // 默认 4G，与 metalio-claw-4 板级一致
+    // 非双网板没有蜂窝模组，即使 NVS 中残留旧的 4G 选择也必须按 Wi-Fi 处理。
+    if (dynamic_cast<DualNetworkBoard*>(&Board::GetInstance()) == nullptr) {
+        return 0;
+    }
+
+    // 与 DualNetworkBoard / network_screen 共用 NVS 读取逻辑。
+    constexpr int kDefaultNetType = 1;  // 双网板沿用板级默认值
     const NetworkType type =
         DualNetworkBoard::LoadNetworkTypeFromSettings(kDefaultNetType);
     return type == NetworkType::ML307 ? 1 : 0;
@@ -1514,16 +1582,12 @@ void OnHomeStatusDeleted(lv_event_t* e) {
 lv_obj_t* CreateStatusBar(lv_obj_t* screen, HomeStatusState* st) {
     // 左右两块容器宽度直接锁死，避免 LVGL flex 在 SIZE_CONTENT + SPACE_BETWEEN
     // 组合下对内容宽度的二次评估把右边「电量 100% 充电中」末尾几个字裁掉。
-    //   - 左侧 300px：足够放下「图标 + 4G + 外置卡」
-    //   - 右侧 400px：「电量 100% 充电中 HH:MM」是 ~18 字宽，预留充分
-    //   - 中间空隙由父 flex SPACE_BETWEEN 自动撑开
-    constexpr int kStatusLeftWidth  = 300;
-    constexpr int kStatusRightWidth = 400;
-
+    // The two flex children are sized from the active panel width, preserving
+    // room for both network information and the battery/time indicators.
     lv_obj_t* bar = lv_obj_create(screen);
     st->bar = bar;
     lv_obj_remove_style_all(bar);
-    lv_obj_set_size(bar, kPanelSize, kStatusBarHeight);
+    lv_obj_set_size(bar, Layout().panel_width, Layout().status_bar_height);
     lv_obj_align(bar, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(bar, lv_color_hex(kStatusBarBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(bar, LV_OPA_50, LV_PART_MAIN);
@@ -1536,7 +1600,7 @@ lv_obj_t* CreateStatusBar(lv_obj_t* screen, HomeStatusState* st) {
 
     lv_obj_t* left = lv_obj_create(bar);
     lv_obj_remove_style_all(left);
-    lv_obj_set_size(left, kStatusLeftWidth, LV_SIZE_CONTENT);
+    lv_obj_set_size(left, Layout().status_left_width, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_opa(left, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(left, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(left, LV_FLEX_FLOW_ROW);
@@ -1576,7 +1640,7 @@ lv_obj_t* CreateStatusBar(lv_obj_t* screen, HomeStatusState* st) {
     // 重排时挤压裁切。
     lv_obj_t* right = lv_obj_create(bar);
     lv_obj_remove_style_all(right);
-    lv_obj_set_size(right, kStatusRightWidth, LV_SIZE_CONTENT);
+    lv_obj_set_size(right, Layout().status_right_width, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_opa(right, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(right, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(right, LV_FLEX_FLOW_ROW);
@@ -1595,7 +1659,8 @@ lv_obj_t* CreateStatusBar(lv_obj_t* screen, HomeStatusState* st) {
 
     st->battery_pct_lbl = lv_label_create(right);
     lv_label_set_long_mode(st->battery_pct_lbl, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(st->battery_pct_lbl, 380);
+    lv_obj_set_width(st->battery_pct_lbl,
+                     std::max(1, Layout().status_right_width - 20));
     lv_label_set_text(st->battery_pct_lbl, I18n::T("电量 --%"));
     lv_obj_set_style_text_align(st->battery_pct_lbl, LV_TEXT_ALIGN_RIGHT,
                                 LV_PART_MAIN);
@@ -1662,13 +1727,14 @@ bool PagerLoopEnabled(const PagerState* state) {
 }
 
 // 无限循环翻页：pager 首尾各加一页克隆，布局为
-// [末页克隆][真实页0..N-1][首页克隆]，真实页 i 的 scroll_x = (i+1)*kPanelSize。
+// [末页克隆][真实页0..N-1][首页克隆]，真实页 i 的 scroll_x =
+// (i+1)*Layout().panel_width。
 int32_t PagerScrollXForPage(const PagerState* state, int logical_page) {
     if (state == nullptr) {
         return 0;
     }
     const int physical = PagerLoopEnabled(state) ? logical_page + 1 : logical_page;
-    return static_cast<int32_t>(physical) * kPanelSize;
+    return static_cast<int32_t>(physical) * Layout().panel_width;
 }
 
 void PagerMaybeWrapAfterScroll(PagerState* state) {
@@ -1682,7 +1748,7 @@ void PagerMaybeWrapAfterScroll(PagerState* state) {
                            LV_ANIM_OFF);
         HighlightDot(state, last);
         s_last_home_page = last;
-    } else if (scroll_x == static_cast<int32_t>(state->page_count + 1) * kPanelSize) {
+    } else if (scroll_x == static_cast<int32_t>(state->page_count + 1) * Layout().panel_width) {
         lv_obj_scroll_to_x(state->pager, PagerScrollXForPage(state, 0),
                            LV_ANIM_OFF);
         HighlightDot(state, 0);
@@ -1732,7 +1798,7 @@ void GoToPage(PagerState* state, int target_page) {
     int32_t target_x = PagerScrollXForPage(state, target_page);
     if (PagerLoopEnabled(state)) {
         if (target_page == 0 && current == state->page_count - 1) {
-            target_x = static_cast<int32_t>(state->page_count + 1) * kPanelSize;
+            target_x = static_cast<int32_t>(state->page_count + 1) * Layout().panel_width;
         } else if (target_page == state->page_count - 1 && current == 0) {
             target_x = 0;
         }
@@ -1760,10 +1826,10 @@ void SnapPagerToNearestPage(PagerState* state, int release_dx) {
 
     int target = state->current_page;
     // 相对起始页对称判定：左滑 delta>0 进下一页，右滑 delta<0 回上一页。
-    if (delta > kPageSnapThreshold ||
+    if (delta > Layout().page_snap_threshold ||
         (release_dx <= -kHomeFlickThreshold && delta > kHomeMoveThreshold)) {
         target = state->current_page + 1;
-    } else if (delta < -kPageSnapThreshold ||
+    } else if (delta < -Layout().page_snap_threshold ||
                (release_dx >= kHomeFlickThreshold && delta < -kHomeMoveThreshold)) {
         target = state->current_page - 1;
     }
@@ -2133,7 +2199,7 @@ void AppendShutdownProgressContent(lv_obj_t* parent) {
 
 lv_obj_t* CreateShutdownScreen() {
     lv_obj_t* screen = lv_obj_create(NULL);
-    lv_obj_set_size(screen, kPanelSize, kPanelSize);
+    lv_obj_set_size(screen, LV_HOR_RES, LV_VER_RES);
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_pad_all(screen, 0, LV_PART_MAIN);
@@ -2250,17 +2316,25 @@ void ShowPowerDialog() {
         return;
     }
 
+    // Legacy apps are rendered inside a 720x720 transformed canvas.  The
+    // overlay is created as a direct child of the active screen and is then
+    // moved into that canvas by screen_util, so its geometry must use the
+    // canvas coordinate space rather than the physical 480x800 display.
+    const bool legacy_screen = screen_is_legacy_fitted(parent);
+    const int panel_w = legacy_screen ? 720 : lv_obj_get_width(parent);
+    const int panel_h = legacy_screen ? 720 : lv_obj_get_height(parent);
+
     // ---- 全屏遮罩 ----
     // FLOATING：让 mask 脱离父屏的 flex / grid 布局。
     // 比如 gps_screen 在根对象上挂了 LV_FLEX_FLOW_COLUMN，没有这个 flag
     // 时 mask 会被父屏的 flex 接管 —— `lv_obj_set_pos(0,0)` 会被布局覆盖
-    // 重排到列尾，加上 720x720 比屏幕还大就只能看到底部一截。挂了
+    // 重排到列尾，使用实际屏幕尺寸避免纵向屏幕只显示遮罩底部一截。挂了
     // FLOATING 后 mask 完全被父布局忽略，set_pos 重新生效，dialog 在任何
     // 屏幕上都能正确居中铺满。
     lv_obj_t* mask = lv_obj_create(parent);
     lv_obj_remove_style_all(mask);
     lv_obj_add_flag(mask, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(mask, kPanelSize, kPanelSize);
+    lv_obj_set_size(mask, panel_w, panel_h);
     lv_obj_set_pos(mask, 0, 0);
     lv_obj_set_style_bg_color(mask, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(mask, LV_OPA_70, LV_PART_MAIN);
@@ -2271,8 +2345,8 @@ void ShowPowerDialog() {
     s_pwr_dlg.mask = mask;
 
     // ---- 中心卡片 ----
-    constexpr int kCardW = 480;
-    constexpr int kCardH = 360;
+    const int kCardW = std::min(480, panel_w - 32);
+    const int kCardH = std::min(360, panel_h - 64);
     lv_obj_t* card = lv_obj_create(mask);
     lv_obj_remove_style_all(card);
     lv_obj_set_size(card, kCardW, kCardH);
@@ -2322,18 +2396,18 @@ void ShowPowerDialog() {
 lv_obj_t* CreatePage(lv_obj_t* pager, int page_index, int total_apps) {
     lv_obj_t* page = lv_obj_create(pager);
     lv_obj_remove_style_all(page);
-    lv_obj_set_size(page, kPanelSize, kPagerHeight);
+    lv_obj_set_size(page, Layout().panel_width, Layout().pager_height);
     lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_pad_hor(page, kPagePadHor, LV_PART_MAIN);
-    lv_obj_set_style_pad_ver(page, kPagePadVer, LV_PART_MAIN);
-    lv_obj_set_style_pad_column(page, kGridColGap, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(page, kGridRowGap, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(page, Layout().page_pad_hor, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(page, Layout().page_pad_ver, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(page, Layout().grid_col_gap, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(page, Layout().grid_row_gap, LV_PART_MAIN);
     lv_obj_remove_flag(page, LV_OBJ_FLAG_SCROLLABLE);
 
     // Fixed 3x3 grid -- each app sits in its natural (col, row) slot so an
     // under-filled page (e.g. a single app on page 2) anchors top-left
     // instead of getting visually centered by a flex space-distribute.
-    lv_obj_set_grid_dsc_array(page, s_col_dsc, s_row_dsc);
+    lv_obj_set_grid_dsc_array(page, Layout().col_dsc, Layout().row_dsc);
     lv_obj_set_layout(page, LV_LAYOUT_GRID);
 
     const int start = page_index * kAppsPerPage;
@@ -2394,11 +2468,14 @@ void CreateIndicator(lv_obj_t* screen, PagerState* state) {
 void HomeScreen::ShowPowerOptionsDialog() { ShowPowerDialog(); }
 
 lv_obj_t* HomeScreen::Create() {
+    ConfigureHomeLayout();
+
     // 主题相关：根据 NVS 里的当前主题 id 把 kApps 的 icon_suffix 拼成完整
     // 路径，写入 s_icon_paths 缓存。后续 CreateAppCell 直接索引这份缓存。
     EnsureIconPathsBuilt();
 
     lv_obj_t* screen = lv_obj_create(NULL);
+    lv_obj_set_size(screen, Layout().panel_width, Layout().panel_height);
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_pad_all(screen, 0, LV_PART_MAIN);
@@ -2429,8 +2506,8 @@ lv_obj_t* HomeScreen::Create() {
     lv_obj_t* pager = lv_obj_create(screen);
     state->pager = pager;
     lv_obj_remove_style_all(pager);
-    lv_obj_set_size(pager, kPanelSize, kPagerHeight);
-    lv_obj_align(pager, LV_ALIGN_TOP_LEFT, 0, kStatusBarHeight);
+    lv_obj_set_size(pager, Layout().panel_width, Layout().pager_height);
+    lv_obj_align(pager, LV_ALIGN_TOP_LEFT, 0, Layout().status_bar_height);
     lv_obj_set_style_bg_opa(pager, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(pager, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(pager, LV_SCROLLBAR_MODE_OFF);

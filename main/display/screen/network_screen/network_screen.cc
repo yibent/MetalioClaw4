@@ -18,10 +18,11 @@
 #include "freertos/task.h"
 
 #include "ssid_manager.h"
-#include "wifi_station.h"
+#include "wifi_manager.h"
 
 #include "application.h"
 #include "board.h"
+#include "config.h"
 #include "dual_network_board.h"
 #include "nt26_board.h"
 #include "settings.h"
@@ -39,9 +40,12 @@ constexpr const char* TAG = "NetworkScreen";
 // ---------------------------------------------------------------------------
 // 视觉常量
 // ---------------------------------------------------------------------------
-constexpr int kPanelW = 720;
-constexpr int kPanelH = 720;
+// Build directly in the active board's native coordinate space, matching the
+// secondary-screen app. Legacy 720x720 fitting is skipped for this screen.
+constexpr int kPanelW = DISPLAY_WIDTH;
+constexpr int kPanelH = DISPLAY_HEIGHT;
 constexpr int kHeaderH = 90;
+constexpr int kStatusCardW = (kPanelW - 32 < 520) ? kPanelW - 32 : 520;
 
 constexpr uint32_t kColorBg         = 0x0E1116;
 constexpr uint32_t kColorCard       = 0x1B2030;
@@ -139,9 +143,14 @@ lv_timer_t*          s_restart_timer = nullptr;
 int                  s_restart_remaining = 0;
 std::string          s_restart_headline;
 // 记录进入页面前 WifiStation 是否已经在跑（即设备网络模式是 WiFi），
-// 用来决定离开时是否恢复 WifiStation::Start()。ML307 模式下 WifiStation
+// 用来决定离开时是否恢复 WifiManager 的 station。ML307 模式下 WifiStation
 // 根本没起过，恢复时跳过即可，避免空跑一份 wifi 栈。
 bool                 s_wifi_station_was_active = false;
+// WifiManager keeps the WiFi driver initialized for the rest of the device
+// lifetime. The network screen may temporarily stop its station, but must not
+// deinitialize a driver that the manager still owns.
+bool                 s_wifi_manager_was_initialized = false;
+bool                 s_wifi_driver_owned_by_screen = false;
 bool                 s_network_switch_pending = false;
 
 // 上网方式（network/type NVS key）：与 DualNetworkBoard::LoadNetworkTypeFromSettings
@@ -234,22 +243,27 @@ const char* rssi_quality_text(int8_t rssi) {
 
 bool screen_alive() { return s_screen_active && s_ui.screen != nullptr; }
 
+DualNetworkBoard* GetDualNetworkBoard() {
+    return dynamic_cast<DualNetworkBoard*>(&Board::GetInstance());
+}
+
 int GetSavedNetworkType() {
-    // 与 DualNetworkBoard 启动时读 NVS 的逻辑一致（默认 4G=1，与 metalio-claw-4 板级一致）
+    // 非双网板没有蜂窝模组，即使 NVS 中残留旧的 4G 选择也必须按 Wi-Fi 处理。
+    if (GetDualNetworkBoard() == nullptr) {
+        return kNetTypeWifi;
+    }
+
     const NetworkType type =
         DualNetworkBoard::LoadNetworkTypeFromSettings(kNetTypeCellular);
     return type == NetworkType::ML307 ? kNetTypeCellular : kNetTypeWifi;
-}
-
-DualNetworkBoard* GetDualNetworkBoard() {
-    return dynamic_cast<DualNetworkBoard*>(&Board::GetInstance());
 }
 
 // 当前是否处于 4G（蜂窝）模式。Settings 中 "network/type" 的语义：
 // 0 = WiFi、1 = 4G/ML307。4G 模式下我们不展示「附近 WiFi」「已保存 WiFi」
 // 两个 Tab，也不会启动本地 STA 栈做扫描。
 bool IsCellularMode() {
-    return GetSavedNetworkType() == 1;
+    return GetDualNetworkBoard() != nullptr &&
+           GetSavedNetworkType() == kNetTypeCellular;
 }
 
 // 返回当前使用的 4G 模组 Board，便于直接调用 SendAtCommand。
@@ -447,10 +461,14 @@ void wifi_evt_handler(void* /*arg*/, esp_event_base_t base, int32_t id,
     }
 }
 
-// 初始化我们自己的 STA 栈。如果设备处于 WiFi 模式（WifiStation 已经在跑），
+// 为页面初始化 STA 栈。如果设备处于 WiFi 模式（WifiStation 已经在跑），
 // 先把它停掉避免事件回调互相打架。返回是否成功。
 bool wifi_init_for_screen() {
     if (s_wifi_initialized) return true;
+
+    auto& wifi_manager = WifiManager::GetInstance();
+    s_wifi_manager_was_initialized = wifi_manager.IsInitialized();
+    s_wifi_driver_owned_by_screen = false;
 
     // 判断当前 wifi 栈是否已经在跑。esp_wifi_get_mode 在未初始化时会返回
     // ESP_ERR_WIFI_NOT_INIT —— 那种情况下我们不能调用 WifiStation::Stop()
@@ -458,8 +476,8 @@ bool wifi_init_for_screen() {
     wifi_mode_t mode_before = WIFI_MODE_NULL;
     esp_err_t mode_err = esp_wifi_get_mode(&mode_before);
     s_wifi_station_was_active = (mode_err == ESP_OK && mode_before != WIFI_MODE_NULL);
-    if (s_wifi_station_was_active) {
-        WifiStation::GetInstance().Stop();
+    if (s_wifi_station_was_active && s_wifi_manager_was_initialized) {
+        wifi_manager.StopStation();
     }
 
     if (s_evt_group == nullptr) {
@@ -486,12 +504,21 @@ bool wifi_init_for_screen() {
         return false;
     }
 
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    cfg.nvs_enable = false;
-    err = esp_wifi_init(&cfg);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_wifi_init failed: %d", err);
-        return false;
+    // WifiManager::Initialize() already installed the driver on normal boot.
+    // Reusing it is required because WifiManager will later restart its
+    // WifiStation instance. Only initialize/deinitialize the driver ourselves
+    // when the manager was not initialized before entering this screen.
+    if (!s_wifi_manager_was_initialized) {
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        cfg.nvs_enable = false;
+        err = esp_wifi_init(&cfg);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_wifi_init failed: %d", err);
+            return false;
+        }
+        s_wifi_driver_owned_by_screen = true;
+    } else {
+        ESP_LOGI(TAG, "reusing WiFi driver owned by WifiManager");
     }
 
     err = esp_event_handler_instance_register(
@@ -523,7 +550,9 @@ void wifi_teardown_for_screen() {
         s_ip_evt_inst = nullptr;
     }
     esp_wifi_stop();
-    esp_wifi_deinit();
+    if (s_wifi_driver_owned_by_screen) {
+        esp_wifi_deinit();
+    }
     if (s_netif != nullptr) {
         esp_netif_destroy(s_netif);
         s_netif = nullptr;
@@ -533,10 +562,14 @@ void wifi_teardown_for_screen() {
 
     // 只有进入页面前 WifiStation 在跑时（即 WiFi 模式）才恢复它；ML307
     // 模式下进入本页面前 wifi 栈本来就没起，不要无中生有起一份。
-    if (s_wifi_station_was_active) {
-        WifiStation::GetInstance().Start();
+    const bool restore_manager_station =
+        s_wifi_station_was_active && s_wifi_manager_was_initialized;
+    if (restore_manager_station && WifiManager::GetInstance().IsInitialized()) {
+        WifiManager::GetInstance().StartStation();
     }
     s_wifi_station_was_active = false;
+    s_wifi_manager_was_initialized = false;
+    s_wifi_driver_owned_by_screen = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,7 +1225,7 @@ void open_connecting_popup(const std::string& ssid) {
 
     lv_obj_t* card = lv_obj_create(mask);
     screen_strip_obj_chrome(card);
-    lv_obj_set_size(card, 520, 360);
+    lv_obj_set_size(card, kStatusCardW, 360);
     lv_obj_center(card);
     lv_obj_set_style_bg_color(card, lv_color_hex(kColorCard), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
@@ -1215,7 +1248,7 @@ void open_connecting_popup(const std::string& ssid) {
     char buf[160];
     snprintf(buf, sizeof(buf), I18n::T("正在连接\n%s …"), ssid.c_str());
     lv_label_set_text(lbl, buf);
-    lv_obj_set_width(lbl, 520 - 48);
+    lv_obj_set_width(lbl, kStatusCardW - 48);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(lbl, lv_color_hex(kColorText), LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl, &font_puhui_20_4, LV_PART_MAIN);
@@ -1289,7 +1322,7 @@ void show_failure_in_status_popup(const std::string& title,
 
     lv_obj_t* card = lv_obj_create(s_ui.status_overlay);
     screen_strip_obj_chrome(card);
-    lv_obj_set_size(card, 520, 320);
+    lv_obj_set_size(card, kStatusCardW, 320);
     lv_obj_center(card);
     lv_obj_set_style_bg_color(card, lv_color_hex(kColorCard), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
@@ -1307,7 +1340,7 @@ void show_failure_in_status_popup(const std::string& title,
     lv_obj_t* body = lv_label_create(card);
     s_ui.status_message_lbl = body;
     lv_label_set_text(body, detail.c_str());
-    lv_obj_set_width(body, 520 - 48);
+    lv_obj_set_width(body, kStatusCardW - 48);
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(body, lv_color_hex(kColorText), LV_PART_MAIN);
     lv_obj_set_style_text_font(body, &font_puhui_20_4, LV_PART_MAIN);
@@ -1339,7 +1372,7 @@ void open_restart_countdown_popup(const std::string& headline) {
 
     lv_obj_t* card = lv_obj_create(mask);
     screen_strip_obj_chrome(card);
-    lv_obj_set_size(card, 520, 320);
+    lv_obj_set_size(card, kStatusCardW, 320);
     lv_obj_center(card);
     lv_obj_set_style_bg_color(card, lv_color_hex(kColorCard), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
@@ -1363,7 +1396,7 @@ void open_restart_countdown_popup(const std::string& headline) {
     snprintf(buf, sizeof(buf), I18n::T("%s\n设备将在 %d 秒后自动重启…"),
              s_restart_headline.c_str(), s_restart_remaining);
     lv_label_set_text(lbl, buf);
-    lv_obj_set_width(lbl, 520 - 48);
+    lv_obj_set_width(lbl, kStatusCardW - 48);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(lbl, lv_color_hex(kColorText), LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl, &font_puhui_20_4, LV_PART_MAIN);
@@ -1493,7 +1526,7 @@ void open_switch_reboot_popup(const char* target_name) {
 
     lv_obj_t* card = lv_obj_create(mask);
     screen_strip_obj_chrome(card);
-    lv_obj_set_size(card, 520, 320);
+    lv_obj_set_size(card, kStatusCardW, 320);
     lv_obj_center(card);
     lv_obj_set_style_bg_color(card, lv_color_hex(kColorCard), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
@@ -1513,7 +1546,7 @@ void open_switch_reboot_popup(const char* target_name) {
     char buf[160];
     snprintf(buf, sizeof(buf), I18n::T("正在切换到 %s\n设备即将重启…"), target_name);
     lv_label_set_text(body, buf);
-    lv_obj_set_width(body, 520 - 48);
+    lv_obj_set_width(body, kStatusCardW - 48);
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(body, lv_color_hex(kColorText), LV_PART_MAIN);
     lv_obj_set_style_text_font(body, &font_puhui_20_4, LV_PART_MAIN);
@@ -1849,7 +1882,7 @@ void open_sim_switching_popup(int target_slot) {
 
     lv_obj_t* card = lv_obj_create(mask);
     screen_strip_obj_chrome(card);
-    lv_obj_set_size(card, 520, 360);
+    lv_obj_set_size(card, kStatusCardW, 360);
     lv_obj_center(card);
     lv_obj_set_style_bg_color(card, lv_color_hex(kColorCard), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
@@ -1874,7 +1907,7 @@ void open_sim_switching_popup(int target_slot) {
     snprintf(buf, sizeof(buf), I18n::T("正在切换到%s…\nAT+CFUN=0"),
              SimSlotName(target_slot));
     lv_label_set_text(lbl, buf);
-    lv_obj_set_width(lbl, 520 - 48);
+    lv_obj_set_width(lbl, kStatusCardW - 48);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(lbl, lv_color_hex(kColorText), LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl, &font_puhui_20_4, LV_PART_MAIN);
@@ -2323,10 +2356,10 @@ void build_tabview(lv_obj_t* parent) {
     //     4G 用户进入这页最常做的事，放第一个最顺手；「网络切换」是兜底
     //     入口（切回 WiFi）。
     //   - WiFi 模式：只挂「网络切换」，没有 SIM 卡概念。
-    if (IsCellularMode()) {
-        build_sim_switch_tab();
-        build_network_switch_tab();
-    } else {
+    if (GetDualNetworkBoard() != nullptr) {
+        if (IsCellularMode()) {
+            build_sim_switch_tab();
+        }
         build_network_switch_tab();
     }
 }
@@ -2358,6 +2391,10 @@ lv_obj_t* NetworkScreen::Create() {
     rebuild_nearby_list_now();
     rebuild_saved_list_now();
 
+    // This screen is authored directly for DISPLAY_WIDTH x DISPLAY_HEIGHT,
+    // like the secondary-screen app. Do not wrap it in the legacy 720x720
+    // transform when the home launcher attaches lifecycle/navigation hooks.
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, on_swipe_back);
     lv_obj_add_event_cb(scr, on_screen_unloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);

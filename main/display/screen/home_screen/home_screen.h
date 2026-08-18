@@ -4,10 +4,8 @@
 
 class HomeScreen {
 public:
-    // Create a fullscreen "home" page on a 720x720 panel.
-    // Lays out app icons in a 3x3 grid (phone-style) with the icon name
-    // shown directly below each icon. Returns the created LVGL screen
-    // object (parent = NULL).
+    // Create a fullscreen home page using the active LVGL display resolution.
+    // App icons are laid out in a responsive 3x3 grid with their names below.
     static lv_obj_t* Create();
     static void RefreshStatusBar();
     // 下次进入主屏时从第一页开始（用于主题切换等场景）。

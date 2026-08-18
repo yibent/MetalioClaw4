@@ -1,11 +1,15 @@
 #pragma once
 
+#include "config.h"
 #include "lvgl.h"
 
 // 测试页通用 UI 常量与行布局工具，供各测试项复用。
 
-constexpr int kTestPanelW     = 720;
-constexpr int kTestPanelH     = 720;
+// Test pages are authored directly in the active panel coordinate space.
+// Keep these shared dimensions in sync with the board instead of routing the
+// whole test app through the legacy square-panel transform.
+constexpr int kTestPanelW     = DISPLAY_WIDTH;
+constexpr int kTestPanelH     = DISPLAY_HEIGHT;
 constexpr int kTestHeaderH    = 96;
 constexpr int kTestRowH       = 84;
 constexpr int kTestRowGap     = 10;

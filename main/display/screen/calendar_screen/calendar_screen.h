@@ -4,7 +4,7 @@
 
 class CalendarScreen {
 public:
-    // Create a 720x720 fullscreen monthly calendar page.
+    // Create a fullscreen monthly calendar page in native display geometry.
     // - Reads current system time (year/month/day) and renders the
     //   appropriate month with weekend coloring and "today" highlight.
     // - Right-swipe gesture navigates back to HomeScreen.

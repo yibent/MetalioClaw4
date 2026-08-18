@@ -12,14 +12,14 @@
 
 #include <driver/i2c_master.h>
 
+#include "board_hardware.h"
+#include "config.h"
 #include "home_screen/home_screen.h"
 #include "i2c_device.h"
 #include "screen_util.h"
 
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_30_4);
-
-extern "C" i2c_master_bus_handle_t metalio_claw_4_get_i2c_bus();
 
 namespace {
 
@@ -130,15 +130,15 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// 几何 / 视觉常量 (720x720 面板)
+// 几何 / 视觉常量（按当前面板原生宽高布局）
 // ---------------------------------------------------------------------------
-constexpr int kPanelW          = 720;
-constexpr int kPanelH          = 720;
+constexpr int kPanelW          = DISPLAY_WIDTH;
+constexpr int kPanelH          = DISPLAY_HEIGHT;
 constexpr int kHeaderH         = 90;
 
 // 三轴卡片区
-constexpr int kCardLeft        = 36;
-constexpr int kCardW           = kPanelW - kCardLeft * 2;   // 648
+constexpr int kCardLeft        = (kPanelW >= 660) ? 36 : 24;
+constexpr int kCardW           = kPanelW - kCardLeft * 2;
 constexpr int kCardH           = 150;
 constexpr int kCardGap         = 14;
 constexpr int kCardTopY        = kHeaderH + 12;
@@ -187,7 +187,7 @@ UiState s_ui;
 // ---------------------------------------------------------------------------
 void EnsureSensorInited() {
     if (s_mag != nullptr && s_mag_init) return;
-    i2c_master_bus_handle_t bus = metalio_claw_4_get_i2c_bus();
+    i2c_master_bus_handle_t bus = board_get_i2c_bus();
     if (bus == nullptr) {
         ESP_LOGE(TAG, "I2C bus 未就绪，跳过 QMC6309 初始化");
         return;
@@ -491,8 +491,9 @@ lv_obj_t* MagnetScreen::Create() {
 
     s_ui.sample_timer = lv_timer_create(OnSampleTick, kSamplePeriodMs, nullptr);
 
-    screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
+    screen_mark_native_layout(scr);
+    screen_attach_swipe_back(scr, OnSwipeBack);
 
     ESP_LOGI(TAG, "magnet screen ready (mag=%s)", s_mag_init ? "ok" : "absent");
     return scr;

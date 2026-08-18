@@ -9,6 +9,7 @@
 #include "esp_log.h"
 
 #include "home_screen/home_screen.h"
+#include "config.h"
 #include "screen_util.h"
 
 LV_FONT_DECLARE(font_puhui_20_4);
@@ -19,10 +20,10 @@ namespace {
 constexpr const char* TAG = "PinTestScreen";
 
 // ---------------------------------------------------------------------------
-// 视觉常量（720x720 面板）
+// 视觉常量（当前板级面板）
 // ---------------------------------------------------------------------------
-constexpr int kPanelW     = 720;
-constexpr int kPanelH     = 720;
+constexpr int kPanelW     = DISPLAY_WIDTH;
+constexpr int kPanelH     = DISPLAY_HEIGHT;
 constexpr int kHeaderH    = 96;
 constexpr int kFooterH    = 96;
 constexpr int kBodyY      = kHeaderH;
@@ -364,10 +365,10 @@ void OnInputPollTimer(lv_timer_t* /*t*/) {
 // ---------------------------------------------------------------------------
 lv_obj_t* CreatePinRow(lv_obj_t* parent, int idx) {
     constexpr int kRowInnerPad = 16;
-    constexpr int kLabelW      = 120;
-    constexpr int kDirSegW     = 180;
+    constexpr int kLabelW      = (DISPLAY_WIDTH < 600) ? 64 : 120;
+    constexpr int kDirSegW     = (DISPLAY_WIDTH < 600) ? 132 : 180;
     constexpr int kDirBtnW     = (kDirSegW - 6) / 2;
-    constexpr int kCtrlW       = 320;
+    constexpr int kCtrlW       = (DISPLAY_WIDTH < 600) ? 160 : 320;
 
     lv_obj_t* row = lv_obj_create(parent);
     screen_strip_obj_chrome(row);
@@ -644,6 +645,7 @@ lv_obj_t* PinTestScreen::Create() {
 
     s_input_poll_timer = lv_timer_create(OnInputPollTimer, 200, nullptr);
 
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);

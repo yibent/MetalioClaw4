@@ -6,6 +6,7 @@
 
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
+#include <esp_lcd_touch.h>
 #include <font_emoji.h>
 
 #include <atomic>
@@ -76,10 +77,15 @@ public:
 
 // MIPI LCD display
 class MipiLcdDisplay : public LcdDisplay {
+protected:
+    void SetupStartupUI();
+
 public:
     MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
                    int width, int height, int offset_x, int offset_y,
-                   bool mirror_x, bool mirror_y, bool swap_xy);
+                   bool mirror_x, bool mirror_y, bool swap_xy,
+                   lv_color_format_t color_format = LV_COLOR_FORMAT_RGB888);
+    bool AddTouch(esp_lcd_touch_handle_t touch_handle);
 };
 
 #endif // LCD_DISPLAY_H

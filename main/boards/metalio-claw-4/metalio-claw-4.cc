@@ -40,6 +40,7 @@
 #include <cstring>
 #include <iostream>
 #include "IOExpander.hpp"
+#include "board_hardware.h"
 #include "pwr_key_handler.h"
 #include "SimpleUart.hpp"
 // #include "power_manager.h"
@@ -71,16 +72,27 @@ static esp_lcd_panel_io_handle_t s_metalio_claw_4_panel_io = NULL;
 static esp_lcd_panel_handle_t s_metalio_claw_4_panel = NULL;
 static esp_lcd_touch_handle_t s_metalio_claw_4_touch = NULL;
 
-extern "C" esp_lcd_panel_io_handle_t metalio_claw_4_get_panel_io() { return s_metalio_claw_4_panel_io; }
-extern "C" esp_lcd_panel_handle_t metalio_claw_4_get_panel() { return s_metalio_claw_4_panel; }
-extern "C" esp_lcd_touch_handle_t metalio_claw_4_get_touch() { return s_metalio_claw_4_touch; }
+extern "C" esp_lcd_panel_io_handle_t board_get_panel_io() { return s_metalio_claw_4_panel_io; }
+extern "C" esp_lcd_panel_handle_t board_get_panel() { return s_metalio_claw_4_panel; }
+extern "C" esp_lcd_touch_handle_t board_get_touch() { return s_metalio_claw_4_touch; }
 
 // 板载 I2C 主总线（端口 1，GPIO 7/8）的全局句柄。
 // 摄像头 SCCB 必须复用此句柄，而不是在同一物理引脚上再分配控制器，
 // 否则两个 I2C 外设会抢总线，导致 GT911 / TCA9555 通信失败。
 static i2c_master_bus_handle_t s_metalio_claw_4_i2c_bus = NULL;
 
-extern "C" i2c_master_bus_handle_t metalio_claw_4_get_i2c_bus() { return s_metalio_claw_4_i2c_bus; }
+extern "C" i2c_master_bus_handle_t board_get_i2c_bus() { return s_metalio_claw_4_i2c_bus; }
+
+extern "C" esp_err_t board_recover_lcd_after_camera() {
+#if METALIO_CLAW_4_USE_FL7707N
+    return ESP_ERR_NOT_SUPPORTED;
+#else
+    if (s_metalio_claw_4_panel_io == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return esp_lcd_nv3051f_replay_vendor_init(s_metalio_claw_4_panel_io);
+#endif
+}
 
 class Wxcho : public I2cDevice {
 private:
@@ -400,8 +412,7 @@ private:
 
         // 暴露 panel IO 句柄，供其他组件（相机界面）在 GPIO 3 摄像头
         // 复位脉冲后重放厂商 DCS 初始化序列。
-        // 注意：camera_screen 当前调用的是 esp_lcd_nv3051f_replay_vendor_init，
-        // replay 函数并在 camera_screen 里按宏分发。
+        // FL7707N 当前没有相机复位后的 vendor init replay 实现。
         s_metalio_claw_4_panel_io = panel_io_handle;
     }
 
@@ -465,7 +476,7 @@ private:
                 {
                     .swap_xy = 0,
                     .mirror_x = 0,
-                    .mirror_y = 0,
+                    .mirror_y = 1,
                 },
         };
 

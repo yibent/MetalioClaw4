@@ -1,0 +1,10 @@
+# ESP-IDF Partition Table - 16MB MetalioClaw4 single system
+# Partition table offset: 0x9000
+# Name,         Type, SubType, Offset,    Size,       Flags
+nvs,            data, nvs,     0xA000,    64K,
+otadata,        data, ota,                ,  8K,
+phy_init,       data, phy,                ,  4K,
+model,          data, spiffs,             ,  1M,
+ota_0,          app,  ota_0,   0x120000,  0x980000,
+resources,      data, spiffs,             ,  4M,
+factory_test,   data, spiffs,             , 600K,

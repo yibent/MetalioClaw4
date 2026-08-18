@@ -23,6 +23,8 @@ static lv_obj_t* ta;
 static lv_timer_t* s_timer;
 static size_t mem_free_start;
 static int16_t g_state;
+static int32_t s_demo_width;
+static int32_t s_demo_height;
 
 void stress_demo_start(void)
 {
@@ -32,6 +34,8 @@ void stress_demo_start(void)
     mem_free_start = 0;
     main_page = NULL;
     ta = NULL;
+    s_demo_width = LV_HOR_RES;
+    s_demo_height = LV_VER_RES;
 
     ESP_LOGI(TAG,
              "Starting stress test. (< 100 bytes permanent memory leak is "
@@ -58,6 +62,8 @@ void stress_demo_stop(void)
 
     g_state = -1;
     mem_free_start = 0;
+    s_demo_width = 0;
+    s_demo_height = 0;
 }
 
 bool stress_demo_finished(void)
@@ -92,7 +98,17 @@ static void obj_test_task_cb(lv_timer_t* tmr)
         }
         case 0:
             main_page = lv_obj_create(lv_screen_active());
-            lv_obj_set_size(main_page, LV_HOR_RES / 2, LV_VER_RES);
+            // Resolve the active screen's current coordinate space so the
+            // stress widgets follow the native panel dimensions on every
+            // board.
+            {
+                lv_obj_t* parent = lv_obj_get_parent(main_page);
+                if (parent != NULL) {
+                    s_demo_width = lv_obj_get_width(parent);
+                    s_demo_height = lv_obj_get_height(parent);
+                }
+            }
+            lv_obj_set_size(main_page, s_demo_width / 2, s_demo_height);
             lv_obj_set_flex_flow(main_page, LV_FLEX_FLOW_COLUMN);
 
             obj = lv_button_create(main_page);
@@ -106,7 +122,7 @@ static void obj_test_task_cb(lv_timer_t* tmr)
         case 1: {
             obj = lv_tabview_create(lv_screen_active());
             lv_tabview_set_tab_bar_size(obj, 50);
-            lv_obj_set_size(obj, LV_HOR_RES / 2, LV_VER_RES / 2);
+            lv_obj_set_size(obj, s_demo_width / 2, s_demo_height / 2);
             lv_obj_align(obj, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
             lv_obj_t* t = lv_tabview_add_tab(obj, "First");
 
@@ -144,7 +160,7 @@ static void obj_test_task_cb(lv_timer_t* tmr)
         case 3:
             ta = lv_textarea_create(lv_screen_active());
             lv_obj_align_to(ta, main_page, LV_ALIGN_OUT_RIGHT_TOP, 10, 10);
-            lv_obj_set_size(ta, LV_HOR_RES / 3, LV_VER_RES / 4);
+            lv_obj_set_size(ta, s_demo_width / 3, s_demo_height / 4);
             lv_textarea_set_placeholder_text(ta, "The placeholder");
             break;
 
@@ -185,7 +201,7 @@ static void obj_test_task_cb(lv_timer_t* tmr)
 #if LV_USE_WIN
         case 8:
             obj = lv_win_create(lv_screen_active());
-            lv_obj_set_size(obj, LV_HOR_RES / 2, LV_VER_RES / 2);
+            lv_obj_set_size(obj, s_demo_width / 2, s_demo_height / 2);
             lv_obj_align(obj, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
             lv_win_add_title(obj, "Window title");
             lv_win_add_button(obj, LV_SYMBOL_CLOSE, 40);
@@ -212,8 +228,8 @@ static void obj_test_task_cb(lv_timer_t* tmr)
             lv_keyboard_set_mode(obj, LV_KEYBOARD_MODE_TEXT_UPPER);
             lv_anim_init(&a);
             lv_anim_set_var(&a, obj);
-            lv_anim_set_values(&a, LV_VER_RES,
-                               LV_VER_RES - lv_obj_get_height(obj));
+            lv_anim_set_values(&a, s_demo_height,
+                               s_demo_height - lv_obj_get_height(obj));
             lv_anim_set_duration(&a, STRESS_DEMO_TIME_STEP + 3);
             lv_anim_set_exec_cb(&a, set_y_anim);
             lv_anim_start(&a);
@@ -452,7 +468,11 @@ static void obj_test_task_cb(lv_timer_t* tmr)
             ta = NULL;
             break;
         case 31:
-            lv_obj_clean(lv_screen_active());
+            // Do not clean the active screen here. The stress screen owns
+            // navigation/lifecycle hooks on the root; only the stress demo's
+            // own objects are removed by the surrounding screen code.
+            // Objects owned by the stress demo have already been removed by
+            // case 29 or their auto-delete timers.
             main_page = NULL;
             g_state = -2;
             break;

@@ -9,11 +9,17 @@
 #include <font_awesome.h>
 #include <esp_log.h>
 #include <esp_err.h>
+#include <esp_lv_decoder.h>
 #include <esp_lvgl_port.h>
+#include <esp_mmap_assets.h>
+#include <esp_lv_fs.h>
 #include <esp_psram.h>
 #include <cstring>
 
 #include "board.h"
+#include "mmap_generate_resources.h"
+#include "screen/boot_screen/boot_screen.h"
+#include "screen/home_screen/home_screen.h"
 
 #define TAG "LcdDisplay"
 
@@ -237,7 +243,8 @@ RgbLcdDisplay::RgbLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
 
 MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
                             int width, int height,  int offset_x, int offset_y,
-                            bool mirror_x, bool mirror_y, bool swap_xy)
+                            bool mirror_x, bool mirror_y, bool swap_xy,
+                            lv_color_format_t color_format)
     : LcdDisplay(panel_io, panel, width, height) {
 
     ESP_LOGI(TAG, "Initialize LVGL library");
@@ -245,6 +252,9 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
 
     ESP_LOGI(TAG, "Initialize LVGL port");
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+    // NetworkScreen has a deeper LVGL object tree than the home screen.  The
+    // port default (7168 bytes) overflows while recursively drawing it.
+    port_cfg.task_stack = 12 * 1024;
     lvgl_port_init(&port_cfg);
 
     ESP_LOGI(TAG, "Adding LCD display");
@@ -256,7 +266,7 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
         .double_buffer = true,
         .hres = static_cast<uint32_t>(width_),
         .vres = static_cast<uint32_t>(height_),
-        .color_format = LV_COLOR_FORMAT_RGB888,
+        .color_format = color_format,
         .flags = {
             .direct_mode = true,
         },
@@ -289,7 +299,86 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
         lv_display_set_offset(display_, offset_x, offset_y);
     }
     ESP_LOGI(TAG, "LVGL 初始化完成");
-    SetupUI();
+    SetupStartupUI();
+}
+
+void MipiLcdDisplay::SetupStartupUI() {
+    // The boot animation and HomeScreen use assets from the resources partition.
+    // Mount it through esp_lv_fs directly so this display can keep using the
+    // regular esp_lvgl_port/DSI path instead of requiring esp_lv_adapter.
+    static mmap_assets_handle_t assets = nullptr;
+    static esp_lv_fs_handle_t fs_handle = nullptr;
+    static esp_lv_decoder_handle_t decoder_handle = nullptr;
+    if (decoder_handle == nullptr) {
+        esp_err_t err = esp_lv_decoder_init(&decoder_handle);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize LVGL asset decoder: %s",
+                     esp_err_to_name(err));
+            SetupUI();
+            return;
+        }
+    }
+    if (assets == nullptr) {
+        const mmap_assets_config_t mmap_cfg = {
+            .partition_label = "resources",
+            .max_files = MMAP_RESOURCES_FILES,
+            .checksum = MMAP_RESOURCES_CHECKSUM,
+            .flags = {.mmap_enable = true},
+        };
+        esp_err_t err = mmap_assets_new(&mmap_cfg, &assets);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to mount resources partition: %s", esp_err_to_name(err));
+            SetupUI();
+            return;
+        }
+    }
+    if (fs_handle == nullptr) {
+        const fs_cfg_t fs_cfg = {
+            .fs_letter = 'A',
+            .fs_nums = MMAP_RESOURCES_FILES,
+            .fs_assets = assets,
+        };
+        esp_err_t err;
+        {
+            DisplayLockGuard lock(this);
+            err = esp_lv_fs_desc_init(&fs_cfg, &fs_handle);
+        }
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to register LVGL resource filesystem: %s",
+                     esp_err_to_name(err));
+            SetupUI();
+            return;
+        }
+    }
+
+    DisplayLockGuard lock(this);
+    lv_obj_t* boot_scr = BootScreen::Create();
+    lv_screen_load(boot_scr);
+
+    lv_timer_t* timer = lv_timer_create(
+        [](lv_timer_t* timer) {
+            lv_obj_t* old_scr = lv_screen_active();
+            lv_obj_t* home_scr = HomeScreen::Create();
+            lv_screen_load(home_scr);
+            if (old_scr != nullptr && old_scr != home_scr) {
+                lv_obj_delete(old_scr);
+            }
+            lv_timer_delete(timer);
+        },
+        2000, nullptr);
+    lv_timer_set_repeat_count(timer, 1);
+}
+
+bool MipiLcdDisplay::AddTouch(esp_lcd_touch_handle_t touch_handle) {
+    if (display_ == nullptr || touch_handle == nullptr) {
+        return false;
+    }
+
+    const lvgl_port_touch_cfg_t touch_cfg = {
+        .disp = display_,
+        .handle = touch_handle,
+    };
+    return lvgl_port_add_touch(&touch_cfg) != nullptr;
 }
 
 LcdDisplay::~LcdDisplay() {

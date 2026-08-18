@@ -8,6 +8,7 @@
 #include "esp_log.h"
 
 #include "pwr_key_handler.h"
+#include "config.h"
 #include "screen_util.h"
 
 LV_FONT_DECLARE(font_puhui_20_4);
@@ -17,7 +18,8 @@ namespace {
 
 constexpr const char* TAG = "DigitalPeopleSettings";
 
-constexpr int32_t kPanelSize = 720;
+constexpr int32_t kPanelW = DISPLAY_WIDTH;
+constexpr int32_t kPanelH = DISPLAY_HEIGHT;
 constexpr int32_t kHeaderH = 90;
 constexpr int32_t kBackBtnSize = 72;
 constexpr int32_t kContentTop = 100;
@@ -222,7 +224,7 @@ void OnScreenUnloaded(lv_event_t* e) {
 void BuildHeader(lv_obj_t* parent) {
     lv_obj_t* header = lv_obj_create(parent);
     screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelSize, kHeaderH);
+    lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -347,7 +349,7 @@ lv_obj_t* DigitalPeopleSettingsScreen::Create() {
     lv_obj_t* scr = lv_obj_create(nullptr);
     s_ui.screen = scr;
     screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelSize, kPanelSize);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -357,7 +359,7 @@ lv_obj_t* DigitalPeopleSettingsScreen::Create() {
     lv_obj_t* content = lv_obj_create(scr);
     screen_strip_obj_chrome(content);
     s_ui.content = content;
-    lv_obj_set_size(content, kPanelSize, kPanelSize - kContentTop);
+    lv_obj_set_size(content, kPanelW, kPanelH - kContentTop);
     lv_obj_set_pos(content, 0, kContentTop);
     lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(content, kPad, LV_PART_MAIN);
@@ -410,6 +412,7 @@ lv_obj_t* DigitalPeopleSettingsScreen::Create() {
     lv_obj_set_style_text_color(foot, lv_color_hex(kColorSubtle), LV_PART_MAIN);
     lv_obj_set_style_text_font(foot, &font_puhui_20_4, LV_PART_MAIN);
 
+    screen_mark_native_layout(scr);
     screen_attach_lifecycle(scr, [](screen_lifecycle_event_t event) {
         PwrKey_OnScreenLifecycle("digital_people_settings", event);
     });

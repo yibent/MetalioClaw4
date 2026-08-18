@@ -11,6 +11,7 @@
 #include "lv_eaf.h"
 
 #include "application.h"
+#include "config.h"
 #include "device_state.h"
 #include "SdCardManager.hpp"
 #include "home_screen/home_screen.h"
@@ -23,7 +24,8 @@ namespace {
 
 constexpr const char* TAG = "DigitalPeopleScreen";
 
-constexpr int32_t  kPanelSize    = 720;
+constexpr int32_t  kPanelW       = DISPLAY_WIDTH;
+constexpr int32_t  kPanelH       = DISPLAY_HEIGHT;
 constexpr uint32_t kColorBg      = 0x000000;          // 纯黑背景
 
 // 表情资源目录：完整路径 = kEmotionDir + 大类名 + DigitalPeoplePrefs::GetEmotionExt()
@@ -96,7 +98,7 @@ lv_obj_t* CreateEmotionWidget(lv_obj_t* parent) {
 //   │                                         │
 //   │        ╭─ user bubble ─╮                │ ← bottom-center
 //   │        ╰───────────────╯                │
-//   └─────────────────────────────────────────┘ 720
+//   └─────────────────────────────────────────┘ DISPLAY_HEIGHT
 //
 //   - 气泡背景：白色 30% 不透明，白色 2px 边框 +
 //     圆角。
@@ -111,8 +113,8 @@ constexpr int32_t  kBubbleBorder     = 2;
 constexpr int32_t  kSideMargin       = 16;
 constexpr int32_t  kSysBubbleTop     = 24;            // 顶部安全间距
 constexpr int32_t  kUserBubbleBottom = 24;
-constexpr int32_t  kSysBubbleMaxW    = kPanelSize - kSideMargin * 2;       // 688
-constexpr int32_t  kUserBubbleMaxW   = kPanelSize - kSideMargin * 2;       // 688
+constexpr int32_t  kSysBubbleMaxW    = kPanelW - kSideMargin * 2;
+constexpr int32_t  kUserBubbleMaxW   = kPanelW - kSideMargin * 2;
 
 constexpr uint32_t kColorBubbleBg     = 0xFFFFFF;
 constexpr uint32_t kColorBubbleBorder = 0xFFFFFF;
@@ -297,7 +299,7 @@ const char* MissingResourceHintText() {
 lv_obj_t* BuildMissingResourceHint(lv_obj_t* parent) {
     lv_obj_t* hint = lv_label_create(parent);
     lv_label_set_text(hint, MissingResourceHintText());
-    lv_obj_set_width(hint, kPanelSize - 80);
+    lv_obj_set_width(hint, kPanelW - 32);
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(hint, lv_color_hex(kColorHintText),
@@ -400,7 +402,7 @@ void open_activation_blocked_dialog() {
     const bool has_code = app.HasPendingActivation();
     s_activation_dialog_shows_code = has_code;
 
-    constexpr int32_t kCardW = 520;
+    constexpr int32_t kCardW = (kPanelW - 32 < 520) ? kPanelW - 32 : 520;
     const int32_t kCardH = has_code ? 420 : 340;
     constexpr int32_t kBackBtnW = 200;
     constexpr int32_t kBackBtnH = 72;
@@ -408,7 +410,7 @@ void open_activation_blocked_dialog() {
     lv_obj_t* mask = lv_obj_create(s_ui.screen);
     screen_strip_obj_chrome(mask);
     lv_obj_add_flag(mask, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(mask, kPanelSize, kPanelSize);
+    lv_obj_set_size(mask, kPanelW, kPanelH);
     lv_obj_set_pos(mask, 0, 0);
     lv_obj_set_style_bg_color(mask, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(mask, LV_OPA_70, LV_PART_MAIN);
@@ -586,7 +588,7 @@ lv_obj_t* DigitalPeopleScreen::Create() {
     lv_obj_t* scr = lv_obj_create(nullptr);
     s_ui.screen = scr;
     screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelSize, kPanelSize);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -620,6 +622,7 @@ lv_obj_t* DigitalPeopleScreen::Create() {
         s_ui.user_label  = usr.label;
     }
 
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, OnLongPressPressed, LV_EVENT_PRESSED, nullptr);
     lv_obj_add_event_cb(scr, OnLongPressPressing, LV_EVENT_PRESSING, nullptr);

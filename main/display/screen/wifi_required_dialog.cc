@@ -1,17 +1,17 @@
 #include "wifi_required_dialog.h"
 
+#include <algorithm>
+
 #include "i18n.h"
 #include "dual_network_board.h"
 #include "screen_util.h"
 
-#include <wifi_station.h>
+#include <wifi_manager.h>
 
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_30_4);
 
 namespace {
-
-constexpr int kPanelSize = 720;
 
 lv_obj_t* s_overlay = nullptr;
 
@@ -29,6 +29,11 @@ void OnOkClicked(lv_event_t* /*e*/) {
 }  // namespace
 
 bool WifiRequired_ShouldBlock() {
+    // 无蜂窝模组的板卡始终使用 Wi-Fi；不要被 NVS 中残留的 4G 选择绕过拦截。
+    if (dynamic_cast<DualNetworkBoard*>(&Board::GetInstance()) == nullptr) {
+        return !WifiManager::GetInstance().IsConnected();
+    }
+
     // 与 home / network_screen 一致：0 = WiFi，1 = 4G
     constexpr int32_t kDefaultNetType = 1;  // 默认 4G，与板级一致
     const NetworkType type =
@@ -36,7 +41,7 @@ bool WifiRequired_ShouldBlock() {
     if (type != NetworkType::WIFI) {
         return false;
     }
-    return !WifiStation::GetInstance().IsConnected();
+    return !WifiManager::GetInstance().IsConnected();
 }
 
 void WifiRequired_ShowDialog(const char* hint_msgid) {
@@ -46,15 +51,18 @@ void WifiRequired_ShowDialog(const char* hint_msgid) {
     }
     CloseDialog();
 
-    constexpr int kCardW = 520;
-    constexpr int kCardH = 300;
-    constexpr int kBtnW = 200;
+    const bool legacy_screen = screen_is_legacy_fitted(scr);
+    const int panel_w = legacy_screen ? 720 : lv_obj_get_width(scr);
+    const int panel_h = legacy_screen ? 720 : lv_obj_get_height(scr);
+    const int kCardW = std::min(520, std::max(1, panel_w - 32));
+    const int kCardH = std::min(300, std::max(1, panel_h - 64));
+    const int kBtnW = std::min(200, std::max(1, kCardW - 56));
     constexpr int kBtnH = 72;
 
     lv_obj_t* mask = lv_obj_create(scr);
     lv_obj_remove_style_all(mask);
     lv_obj_add_flag(mask, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(mask, kPanelSize, kPanelSize);
+    lv_obj_set_size(mask, panel_w, panel_h);
     lv_obj_set_pos(mask, 0, 0);
     lv_obj_set_style_bg_color(mask, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(mask, LV_OPA_70, LV_PART_MAIN);

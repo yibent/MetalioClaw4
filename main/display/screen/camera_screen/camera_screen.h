@@ -13,8 +13,8 @@
 // ---------------------------------------------------------------------------
 // CameraScreen
 //
-// 720x720 全屏摄像头 App：
-//   - 屏幕上方 720x600  : 实时预览 / 相册网格 / 大图查看
+// 全屏摄像头 App（预览区按当前板级面板高度动态分配）：
+//   - 屏幕上方：实时预览 / 相册网格 / 大图查看
 //   - 屏幕下方 720x120  : 「拍照」+ 相册图标；相册页全屏显示顶部 header（返回 + 标题）
 //
 // 拍照：冻结当前画面；有 SD 卡时保存 JPG 到 /sdcard 根目录（质量见 CAMERA_JPEG_QUALITY）。
@@ -46,7 +46,7 @@ public:
     // 摄像头流水线的启动 / 停止。
     static void LifecycleCallback(screen_lifecycle_event_t event);
 
-    // 供硬件测试页复用：720x600 RGB888 预览缓冲与外部 canvas。
+    // 供硬件测试页复用：原生 RGB888 预览缓冲与外部 canvas。
     struct PreviewBuffer {
         uint8_t* data;
         int      width;

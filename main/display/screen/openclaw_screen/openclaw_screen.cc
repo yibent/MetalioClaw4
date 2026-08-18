@@ -20,6 +20,7 @@
 
 #include "api_endpoints.h"
 #include "application.h"
+#include "config.h"
 #include "audio_codec.h"
 #include "audio_service.h"
 #include "board.h"
@@ -45,7 +46,7 @@ constexpr size_t kMaxRecordBytes  =
 constexpr int  kMinRecordMs       = 300;  // 低于此时长视为误触
 
 // ---------------------------------------------------------------------------
-// 720x720 暗黑主题布局（配色对齐 network_screen）
+// Native-panel dark layout (palette aligned with network_screen)
 //
 //   ┌───────────────────────────────────────────┐ 0
 //   │ Header   "OpenClaw"  [清空]                  │ 88
@@ -57,10 +58,10 @@ constexpr int  kMinRecordMs       = 300;  // 低于此时长视为误触
 //   │        ┌───────────────┐                  │
 //   │        │   按住说话     │                  │
 //   │        └───────────────┘                  │
-//   └───────────────────────────────────────────┘ 720
+//   └───────────────────────────────────────────┘ DISPLAY_HEIGHT
 // ---------------------------------------------------------------------------
-constexpr int32_t kPanelW       = 720;
-constexpr int32_t kPanelH       = 720;
+constexpr int32_t kPanelW       = DISPLAY_WIDTH;
+constexpr int32_t kPanelH       = DISPLAY_HEIGHT;
 constexpr int32_t kHeaderH      = 88;
 constexpr int32_t kBackBtnSize  = 72;
 constexpr int32_t kFooterH      = 140;
@@ -295,7 +296,7 @@ void open_activation_blocked_dialog(lv_obj_t* parent_screen) {
     const bool has_code = app.HasPendingActivation();
     s_activation_dialog_shows_code = has_code;
 
-    constexpr int32_t kCardW = 520;
+    constexpr int32_t kCardW = (kPanelW - 32 < 520) ? kPanelW - 32 : 520;
     const int32_t kCardH = has_code ? 420 : 340;
     constexpr int32_t kBackBtnW = 200;
     constexpr int32_t kBackBtnH = 72;
@@ -2136,7 +2137,7 @@ void open_clear_confirm_dialog(ClearDialogMode mode) {
         return;
     }
 
-    constexpr int32_t kCardW = 480;
+    constexpr int32_t kCardW = (kPanelW - 32 < 480) ? kPanelW - 32 : 480;
     constexpr int32_t kCardH = 280;
     constexpr int32_t kBtnW = 200;
     constexpr int32_t kBtnH = 80;
@@ -2623,6 +2624,8 @@ lv_obj_t* create_list_screen() {
     build_list_header(scr);
     build_list_body(scr);
 
+    screen_mark_native_layout(scr);
+
     if (s_activation_blocked) {
         open_activation_blocked_dialog(scr);
     }
@@ -2663,6 +2666,8 @@ lv_obj_t* create_detail_screen(const std::string& conversation_id,
     build_detail_header(scr);
     build_message_list(scr);
     build_footer(scr);
+
+    screen_mark_native_layout(scr);
 
     if (s_status_lbl != nullptr) {
         lv_label_set_text(s_status_lbl, I18n::T("正在检查龙虾状态…"));

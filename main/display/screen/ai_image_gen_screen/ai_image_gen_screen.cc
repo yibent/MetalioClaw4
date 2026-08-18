@@ -23,6 +23,7 @@
 #include "audio_codec.h"
 #include "audio_service.h"
 #include "board.h"
+#include "config.h"
 #include "device_state.h"
 #include "home_screen/home_screen.h"
 #include "http.h"
@@ -45,8 +46,8 @@ constexpr size_t kMaxRecordBytes =
     static_cast<size_t>(kSampleRate) * kBytesPerSample * kMaxRecordSeconds;
 constexpr int  kMinRecordMs      = 300;
 
-constexpr int32_t kPanelW      = 720;
-constexpr int32_t kPanelH      = 720;
+constexpr int32_t kPanelW      = DISPLAY_WIDTH;
+constexpr int32_t kPanelH      = DISPLAY_HEIGHT;
 constexpr int32_t kHeaderH     = 88;
 constexpr int32_t kBackBtnSize = 72;
 constexpr int32_t kFooterH     = 108;
@@ -54,7 +55,9 @@ constexpr int32_t kBodyH       = kPanelH - kHeaderH - kFooterH;
 constexpr int32_t kHeaderSidePad = 8;
 constexpr int32_t kPromptAreaH = 56;
 constexpr int32_t kTabBarH     = 52;
-constexpr int32_t kGalleryH    = kBodyH - kPromptAreaH - 20;
+// Account for body padding and the flex row gap so the gallery stays above
+// the footer on the taller native panel as well as the legacy square panel.
+constexpr int32_t kGalleryH    = kBodyH - kPromptAreaH - 26;
 
 constexpr int   kPollIntervalMs      = 3000;
 constexpr int   kPollFirstDelayMs    = 1500;
@@ -1245,7 +1248,7 @@ void build_footer(lv_obj_t* parent) {
     lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
 
-    constexpr int32_t kBtnW = 400;
+    constexpr int32_t kBtnW = (kPanelW - 32 < 400) ? kPanelW - 32 : 400;
     constexpr int32_t kBtnH = 72;
     s_record_btn = lv_button_create(footer);
     lv_obj_set_size(s_record_btn, kBtnW, kBtnH);
@@ -1296,6 +1299,7 @@ lv_obj_t* AiImageGenScreen::Create() {
     build_footer(scr);
 
     s_tick_timer = lv_timer_create(tick_timer_cb, 100, nullptr);
+    screen_mark_native_layout(scr);
     lv_obj_add_event_cb(scr, on_screen_unloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);
     screen_attach_swipe_back(scr, on_swipe_back);

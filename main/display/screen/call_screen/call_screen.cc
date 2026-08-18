@@ -16,6 +16,7 @@
 
 #include "IOExpander.hpp"
 #include "board.h"
+#include "config.h"
 #include "dual_network_board.h"
 #include "nt26_board.h"
 #include "settings.h"
@@ -25,7 +26,7 @@ LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_number_50_4);
 
 // ---------------------------------------------------------------------------
-// 720x720 layout
+// Native panel layout
 //
 //  +-----------------------------------------------+ y=0
 //  |  [◀]  电话                                    |  header (h=88)
@@ -37,20 +38,21 @@ LV_FONT_DECLARE(font_puhui_number_50_4);
 //  |   [4 GHI] [5 JKL] [6 MNO]                      |  digit grid 3x3
 //  |   [7 PQRS][8 TUV] [9 WXYZ]                     |  + 0 居中
 //  |            [0 +]              [ call / hangup ]|  拨打：右下角放大
-//  +-----------------------------------------------+ y=720
+//  +-----------------------------------------------+ y=DISPLAY_HEIGHT
 // ---------------------------------------------------------------------------
 
 namespace {
 
 constexpr const char* TAG = "CallScreen";
 
-constexpr int kPanelSize    = 720;
+constexpr int kPanelW      = DISPLAY_WIDTH;
+constexpr int kPanelH      = DISPLAY_HEIGHT;
 constexpr int kPad          = 16;
 constexpr int kBackBtnSize  = 72;   // 与其他页面一致的返回按钮点击区域
 constexpr int kHeaderH      = 88;   // 容纳 72px 返回按钮 + 上下留白
 constexpr int kNumberAreaH  = 100;  // 容纳 50px 号码字 + 状态行
 constexpr int kKeypadY      = kHeaderH + kNumberAreaH;
-constexpr int kKeypadH      = kPanelSize - kKeypadY;
+constexpr int kKeypadH      = kPanelH - kKeypadY;
 constexpr int kKeypadBottomPad = 16;  // 数字盘与底边留白（拨打键另计）
 
 // ----- number area sub-layout ----------------------------------------------
@@ -70,13 +72,13 @@ constexpr int kBackspaceY   =
 // 数字区：3 列 × 4 行（末行仅 0 居中）；拨打键贴屏幕右下角放大。
 constexpr int kDigitRows    = 4;
 constexpr int kKeypadCols   = 3;
-constexpr int kKeypadColGap = 48;
-constexpr int kKeypadRowGap = 16;
-constexpr int kKeyDiameter  = 96;   // circular digit buttons
+constexpr int kKeypadColGap = (DISPLAY_WIDTH < 600) ? 24 : 48;
+constexpr int kKeypadRowGap = (DISPLAY_WIDTH < 600) ? 12 : 16;
+constexpr int kKeyDiameter  = (DISPLAY_WIDTH < 600) ? 80 : 96;
 
 // Action button (call / hangup) — 屏幕右下角，明显大于数字键。
-constexpr int kActionBtnD      = 128;
-constexpr int kActionEdgePad   = 28;  // 距右/底边
+constexpr int kActionBtnD      = (DISPLAY_WIDTH < 600) ? 104 : 128;
+constexpr int kActionEdgePad   = (DISPLAY_WIDTH < 600) ? 20 : 28;  // 距右/底边
 
 // ----- iOS-inspired dark phone palette -------------------------------------
 constexpr uint32_t kColorBg            = 0x000000;
@@ -577,7 +579,7 @@ void BuildNumberArea(lv_obj_t* parent) {
                                 LV_PART_MAIN);
     lv_label_set_long_mode(s_number_lbl, LV_LABEL_LONG_SCROLL);
     lv_obj_set_size(s_number_lbl,
-                    kPanelSize - 2 * kPad - kBackspaceBtnSize - 24,
+                    kPanelW - 2 * kPad - kBackspaceBtnSize - 24,
                     kNumberLblH);
     lv_obj_align(s_number_lbl, LV_ALIGN_TOP_MID, 0, kNumberLblTop);
     lv_obj_remove_flag(s_number_lbl, LV_OBJ_FLAG_CLICKABLE);
@@ -590,7 +592,7 @@ void BuildNumberArea(lv_obj_t* parent) {
     lv_obj_set_style_text_font(s_status_lbl, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_status_lbl, LV_TEXT_ALIGN_CENTER,
                                 LV_PART_MAIN);
-    lv_obj_set_size(s_status_lbl, kPanelSize - 2 * kPad, kStatusLblH);
+    lv_obj_set_size(s_status_lbl, kPanelW - 2 * kPad, kStatusLblH);
     lv_obj_align(s_status_lbl, LV_ALIGN_TOP_MID, 0, kStatusLblTop);
     lv_obj_remove_flag(s_status_lbl, LV_OBJ_FLAG_CLICKABLE);
 
@@ -644,7 +646,7 @@ void BuildKeypad(lv_obj_t* parent) {
         kKeypadCols * kKeyDiameter + (kKeypadCols - 1) * kKeypadColGap;
     const int digit_h =
         kDigitRows * kKeyDiameter + (kDigitRows - 1) * kKeypadRowGap;
-    const int x_origin = (kPanelSize - row_w) / 2;
+    const int x_origin = (kPanelW - row_w) / 2;
     const int avail_h  = kKeypadH - kKeypadBottomPad;
     const int y_origin = kKeypadY + (avail_h - digit_h) / 2;
     const int cell_step_x = kKeyDiameter + kKeypadColGap;
@@ -704,6 +706,7 @@ void BuildKeypad(lv_obj_t* parent) {
 
 lv_obj_t* CallScreen::Create() {
     lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
@@ -726,6 +729,8 @@ lv_obj_t* CallScreen::Create() {
     // 屏幕被卸载时清理 active 标志，确保 lv_async_call 不会回到野指针。
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);
+
+    screen_mark_native_layout(scr);
 
     // 注：本屏不再挂右滑返回手势——拨号过程中误触概率太高（横滑数字键
     // 容易扫成返回）。返回入口只保留左上角的明确按钮 OnSwipeBack()。

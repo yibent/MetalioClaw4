@@ -13,6 +13,7 @@
 #include "SimpleUart.hpp"
 
 #include "home_screen/home_screen.h"
+#include "config.h"
 #include "screen_util.h"
 
 #include "lv_eaf.h"
@@ -43,7 +44,8 @@ constexpr const char* TAG = "MusicScreen";
 //   ~y=694 │  蓝牙音箱模式 · 手机连本机 …   │  使用提示，font 20, dim
 //   y=720  └────────────────────────────────┘
 // ---------------------------------------------------------------------------
-constexpr int32_t kPanelSize = 720;
+constexpr int32_t kPanelW = DISPLAY_WIDTH;
+constexpr int32_t kPanelH = DISPLAY_HEIGHT;
 
 constexpr uint32_t kColorBg = 0x0E1116;
 constexpr uint32_t kColorBgGrad = 0x161A22;
@@ -55,7 +57,7 @@ constexpr uint32_t kColorPlayBtnBg = 0x3A4150;
 constexpr uint32_t kColorPlayBtnBgPressed = 0x4A5260;
 
 constexpr int32_t kTitleY = 48;
-constexpr int32_t kAlbumSize = 240;
+constexpr int32_t kAlbumSize = (kPanelW - 48 < 240) ? kPanelW - 48 : 240;
 // 屏幕最底部的常驻使用说明，距底边的内边距。
 constexpr int32_t kHintBottomMargin = 16;
 // GIF 圆形主体在 240x240 内是带抗锯齿白边的，如果遮罩刚好等于 240，
@@ -65,7 +67,7 @@ constexpr int32_t kAlbumMaskShrink = 4;  // 每边裁掉的像素，加大可去
 constexpr int32_t kAlbumMaskSize = kAlbumSize - kAlbumMaskShrink * 2;
 constexpr int32_t kAlbumY = 140;
 constexpr int32_t kCtrlRowY = 560;
-constexpr int32_t kCtrlRowWidth = 700;
+constexpr int32_t kCtrlRowWidth = kPanelW - 32;
 constexpr int32_t kCtrlRowHeight = 120;
 
 constexpr int32_t kCtrlSideBtnSize = 80;
@@ -75,7 +77,7 @@ constexpr int32_t kCtrlPlayBtnSize = 112;
 constexpr int32_t kLyricLineCount = 3;
 constexpr int32_t kLyricY = 410;
 constexpr int32_t kLyricLineGap = 34;
-constexpr int32_t kLyricLineWidth = kPanelSize - 80;
+constexpr int32_t kLyricLineWidth = kPanelW - 40;
 // 每行的目标 opacity（顶 -> 底）。255 / 153 / 76 大约对应 100% / 60% / 30%。
 constexpr lv_opa_t kLyricTargetOpa[kLyricLineCount] = {255, 153, 76};
 constexpr uint32_t kLyricFadeDurationMs = 380;
@@ -484,7 +486,7 @@ void BuildUsageHint(lv_obj_t* scr) {
     lv_obj_set_style_text_color(hint, lv_color_hex(0x8B92A3), LV_PART_MAIN);
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(hint, kPanelSize - 60);
+    lv_obj_set_width(hint, kPanelW - 32);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -kHintBottomMargin);
     screen_make_input_passive(hint);
 }
@@ -498,7 +500,7 @@ void BuildSongTitle(lv_obj_t* scr) {
                                 LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.lbl_song, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(s_ui.lbl_song, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_ui.lbl_song, kPanelSize - 80);
+    lv_obj_set_width(s_ui.lbl_song, kPanelW - 32);
     lv_obj_align(s_ui.lbl_song, LV_ALIGN_TOP_MID, 0, kTitleY);
     screen_make_input_passive(s_ui.lbl_song);
 }
@@ -595,6 +597,7 @@ lv_obj_t* MusicScreen::Create() {
     s_rx_buffer.clear();
 
     lv_obj_t* scr = lv_obj_create(nullptr);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     screen_strip_obj_chrome(scr);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
@@ -611,6 +614,7 @@ lv_obj_t* MusicScreen::Create() {
     BuildBackButton(scr);
 
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
 
     s_screen_active = true;

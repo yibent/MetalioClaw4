@@ -1,6 +1,7 @@
 #include "pin_gpio_test.h"
 #include "i18n.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <utility>
@@ -321,10 +322,15 @@ void OnInputPollTimer(lv_timer_t* /*t*/) {
 }
 
 void CreatePinRow(lv_obj_t* parent, int idx, int row_w) {
-    constexpr int kLabelW  = 120;
-    constexpr int kDirSegW = 180;
-    constexpr int kDirBtnW = (kDirSegW - 6) / 2;
-    constexpr int kCtrlW   = 280;
+    // The original row was authored for a square panel and its 120+180+280
+    // columns overflow a 480px panel. Keep the same three-column layout, but
+    // reserve compact label/segmented-control widths on the narrow panel and
+    // give the remaining space to the output state controls.
+    const int inner_w = std::max(0, row_w - 24);
+    const int label_w = (row_w < 520) ? 88 : 120;
+    const int dir_seg_w = (row_w < 520) ? 144 : 180;
+    const int dir_btn_w = (dir_seg_w - 6) / 2;
+    const int ctrl_w = std::max(0, inner_w - label_w - dir_seg_w - 16);
 
     lv_obj_t* row = lv_obj_create(parent);
     screen_strip_obj_chrome(row);
@@ -344,11 +350,11 @@ void CreatePinRow(lv_obj_t* parent, int idx, int row_w) {
     lv_label_set_text(label, kPins[idx].label);
     lv_obj_set_style_text_color(label, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_font(label, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_set_width(label, kLabelW);
+    lv_obj_set_width(label, label_w);
 
     lv_obj_t* seg = lv_obj_create(row);
     screen_strip_obj_chrome(seg);
-    lv_obj_set_size(seg, kDirSegW, kRowH - 24);
+    lv_obj_set_size(seg, dir_seg_w, kRowH - 24);
     lv_obj_set_style_bg_opa(seg, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(seg, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(seg, LV_FLEX_FLOW_ROW);
@@ -359,7 +365,7 @@ void CreatePinRow(lv_obj_t* parent, int idx, int row_w) {
     auto make_dir_btn = [&](const char* text, bool is_out) {
         lv_obj_t* b = lv_button_create(seg);
         lv_obj_remove_style_all(b);
-        lv_obj_set_size(b, kDirBtnW, kRowH - 28);
+        lv_obj_set_size(b, dir_btn_w, kRowH - 28);
         lv_obj_set_style_radius(b, 12, LV_PART_MAIN);
         lv_obj_set_style_bg_color(b, lv_color_hex(kColorMuted), LV_PART_MAIN);
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
@@ -387,7 +393,7 @@ void CreatePinRow(lv_obj_t* parent, int idx, int row_w) {
 
     lv_obj_t* ctrl = lv_obj_create(row);
     screen_strip_obj_chrome(ctrl);
-    lv_obj_set_size(ctrl, kCtrlW, kRowH - 16);
+    lv_obj_set_size(ctrl, ctrl_w, kRowH - 16);
     lv_obj_set_style_bg_opa(ctrl, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(ctrl, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(ctrl, LV_FLEX_FLOW_ROW);

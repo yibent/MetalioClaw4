@@ -2,6 +2,7 @@
 #include "i18n.h"
 
 #include "home_screen/home_screen.h"
+#include "config.h"
 #include "screen_util.h"
 
 #include <cmath>
@@ -15,7 +16,7 @@ LV_FONT_DECLARE(font_puhui_30_4);
 LV_FONT_DECLARE(font_puhui_20_4);
 
 // ---------------------------------------------------------------------------
-// 720x720 layout
+// Native-width layout
 //
 //  +-----------------------------------------------+ y=0
 //  |  计算器                              [返回]  |  header  (h=80)
@@ -29,19 +30,20 @@ LV_FONT_DECLARE(font_puhui_20_4);
 //  |  [4]  [5]   [6]  [-]                          |  buttons grid
 //  |  [1]  [2]   [3]  [+]                          |
 //  |  [   0   ]  [.]  [=]                          |  (0 spans 2 cols)
-//  +-----------------------------------------------+ y=720
+//  +-----------------------------------------------+ y=panel height
 // ---------------------------------------------------------------------------
 
 namespace {
 
 // ----- screen layout constants ---------------------------------------------
-constexpr int kPanelSize  = 720;
+constexpr int kPanelW     = DISPLAY_WIDTH;
+constexpr int kPanelH     = DISPLAY_HEIGHT;
 constexpr int kPad        = 16;
 constexpr int kHeaderH    = 80;
 constexpr int kHistoryH   = 40;
 constexpr int kDisplayH   = 120;
 constexpr int kGridY      = kHeaderH + kHistoryH + kDisplayH;     // 240
-constexpr int kGridH      = kPanelSize - kGridY - kPad;           // 464
+constexpr int kGridH      = kPanelH - kGridY - kPad;
 constexpr int kGridCols   = 4;
 constexpr int kGridRows   = 5;
 
@@ -387,7 +389,7 @@ void BuildDisplay(lv_obj_t* parent) {
     lv_obj_set_style_text_font(s_history_lbl, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_history_lbl, LV_TEXT_ALIGN_RIGHT,
                                 LV_PART_MAIN);
-    lv_obj_set_size(s_history_lbl, kPanelSize - 2 * kPad, kHistoryH);
+    lv_obj_set_size(s_history_lbl, kPanelW - 2 * kPad, kHistoryH);
     lv_obj_set_pos(s_history_lbl, kPad, kHeaderH);
 
     // Main display -- right-aligned big number.
@@ -399,7 +401,7 @@ void BuildDisplay(lv_obj_t* parent) {
     lv_obj_set_style_text_align(s_display_lbl, LV_TEXT_ALIGN_RIGHT,
                                 LV_PART_MAIN);
     lv_label_set_long_mode(s_display_lbl, LV_LABEL_LONG_SCROLL);
-    lv_obj_set_size(s_display_lbl, kPanelSize - 2 * kPad - 8, kDisplayH);
+    lv_obj_set_size(s_display_lbl, kPanelW - 2 * kPad - 8, kDisplayH);
     lv_obj_set_pos(s_display_lbl, kPad + 4, kHeaderH + kHistoryH);
 }
 
@@ -437,7 +439,7 @@ void BuildKeypad(lv_obj_t* parent) {
 
     lv_obj_t* grid = lv_obj_create(parent);
     lv_obj_remove_style_all(grid);
-    lv_obj_set_size(grid, kPanelSize - 2 * kPad, kGridH);
+    lv_obj_set_size(grid, kPanelW - 2 * kPad, kGridH);
     lv_obj_set_pos(grid, kPad, kGridY);
     lv_obj_set_style_pad_all(grid, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_row(grid, 12, LV_PART_MAIN);
@@ -475,6 +477,7 @@ void BuildKeypad(lv_obj_t* parent) {
 
 lv_obj_t* Calculator::Create() {
     lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
@@ -492,6 +495,7 @@ lv_obj_t* Calculator::Create() {
     // CLICKED handlers; only PRESS / RELEASE events landing on the screen
     // background (header strip, gaps between buttons) feed the gesture
     // tracker, so taps on a key never accidentally count as a swipe.
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
 
     return scr;

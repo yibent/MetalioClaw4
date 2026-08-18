@@ -9,6 +9,7 @@
 #include "esp_log.h"
 
 #include "home_screen/home_screen.h"
+#include "config.h"
 #include "screen_util.h"
 #include "theme_manager.h"
 
@@ -19,7 +20,8 @@ namespace {
 
 constexpr const char* TAG = "ThemeScreen";
 
-constexpr int kPanelSize   = 720;
+constexpr int kPanelW      = DISPLAY_WIDTH;
+constexpr int kPanelH      = DISPLAY_HEIGHT;
 constexpr int kHeaderH     = 90;
 constexpr int kPad         = 16;
 constexpr int kBackBtnSize = 72;
@@ -27,7 +29,7 @@ constexpr int kBackBtnSize = 72;
 // 预览卡片尺寸：与 home_screen 上的 app cell 同尺寸 + 同圆角，让用户一眼
 // 看出"这就是主页磁贴的样子"。
 //
-// 主题数量 1~3 时勉强能 3 张横排，4 张就超 720 宽了，这里直接按 2 列布
+// 主题数量较多时统一按 2 列布局，避免预览卡片挤压标题和边距。
 // 局；列数变更影响行排列与内容垂直起点，下面 BuildContent 里会按 2 列推
 // 出每张卡的位置。
 constexpr int kCardSize     = 180;
@@ -116,9 +118,11 @@ lv_obj_t* BuildThemeCard(lv_obj_t* parent, int theme_id, int x, int y_top) {
     lv_obj_set_style_clip_corner(card, true, LV_PART_MAIN);
 
     // 用该主题的 "theme app" 图标本身作为预览（用户指明"展示三个主题图标"）
-    char src[64];
-    std::snprintf(src, sizeof(src),
-                  "A:ic_app_home_theme%d_theme.spng", theme_id);
+    // LVGL keeps the file path pointer, so it must outlive this function.
+    static char preview_paths[ThemeManager::kThemeCount][64];
+    char* src = preview_paths[theme_id - ThemeManager::kMinThemeId];
+    std::snprintf(src, 64,
+                  "A:ic_app_home_theme%d_theme_preview.spng", theme_id);
     lv_obj_t* preview = lv_image_create(card);
     lv_image_set_src(preview, src);
     lv_obj_set_size(preview, icon_size, icon_size);
@@ -196,14 +200,14 @@ void BuildContent(lv_obj_t* parent) {
 
     const int grid_w = cols * kCardSize + (cols - 1) * kCardColGap;
     const int grid_h = rows * kCellH + (rows - 1) * kCardRowGap;
-    static_assert(2 * kCardSize + kCardColGap <= kPanelSize,
+    static_assert(2 * kCardSize + kCardColGap <= kPanelW,
                   "theme card row exceeds panel width");
 
     const int avail_top = kHeaderH;
-    const int avail_bottom = kPanelSize - kHintReservedH;
+    const int avail_bottom = kPanelH - kHintReservedH;
     const int avail_h = avail_bottom - avail_top;
 
-    const int origin_x = (kPanelSize - grid_w) / 2;
+    const int origin_x = (kPanelW - grid_w) / 2;
     int origin_y = avail_top + (avail_h - grid_h) / 2;
     if (origin_y < avail_top + 16) {
         origin_y = avail_top + 16;
@@ -270,7 +274,7 @@ void OpenConfirmDialog(int theme_id) {
     }
     s_dlg.target_theme = theme_id;
 
-    constexpr int kCardW = 480;
+    constexpr int kCardW = (kPanelW - 32 < 480) ? kPanelW - 32 : 480;
     constexpr int kCardH = 280;
     constexpr int kBtnW  = 200;
     constexpr int kBtnH  = 80;
@@ -279,7 +283,7 @@ void OpenConfirmDialog(int theme_id) {
     lv_obj_t* mask = lv_obj_create(s_ui.screen);
     lv_obj_remove_style_all(mask);
     lv_obj_add_flag(mask, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(mask, kPanelSize, kPanelSize);
+    lv_obj_set_size(mask, kPanelW, kPanelH);
     lv_obj_set_pos(mask, 0, 0);
     lv_obj_set_style_bg_color(mask, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(mask, LV_OPA_70, LV_PART_MAIN);
@@ -373,7 +377,7 @@ lv_obj_t* ThemeScreen::Create() {
     s_ui.current_theme = ThemeManager::GetCurrentThemeId();
 
     screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelSize, kPanelSize);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -381,9 +385,10 @@ lv_obj_t* ThemeScreen::Create() {
     BuildHeader(scr);
     BuildContent(scr);
 
-    screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);
+    screen_mark_native_layout(scr);
+    screen_attach_swipe_back(scr, OnSwipeBack);
     return scr;
 }
 

@@ -14,6 +14,8 @@
 
 #include <driver/i2c_master.h>
 
+#include "board_hardware.h"
+#include "config.h"
 #include "home_screen/home_screen.h"
 #include "i2c_device.h"
 #include "screen_util.h"
@@ -21,8 +23,6 @@
 
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_30_4);
-
-extern "C" i2c_master_bus_handle_t metalio_claw_4_get_i2c_bus();
 
 namespace {
 
@@ -56,16 +56,16 @@ constexpr int     kGravityMg    = 1000;
 constexpr uint8_t kWhoAmIExpected[] = {0x11, 0x33, 0x32, 0x44};
 
 // ---------------------------------------------------------------------------
-// 几何 / 视觉常量（720x720 面板）
+// 几何 / 视觉常量（按当前面板原生宽高布局）
 // ---------------------------------------------------------------------------
-constexpr int kPanelW          = 720;
-constexpr int kPanelH          = 720;
+constexpr int kPanelW          = DISPLAY_WIDTH;
+constexpr int kPanelH          = DISPLAY_HEIGHT;
 constexpr int kHeaderH         = 90;
 constexpr int kFooterTopY      = 540;
 constexpr int kFooterH         = kPanelH - kFooterTopY;
 
-constexpr int kCenterX         = kPanelW / 2;     // 360
-constexpr int kCenterY         = (kHeaderH + kFooterTopY) / 2;  // 315
+constexpr int kCenterX         = kPanelW / 2;
+constexpr int kCenterY         = (kHeaderH + kFooterTopY) / 2;
 constexpr int kOuterRadius     = 210;             // 外参考圈
 constexpr int kMidRadius       = 110;             // 第二圈刻度
 constexpr int kTargetRadius    = 30;              // 中心目标小圈
@@ -176,7 +176,7 @@ void ResetCalOffsets() {
 void EnsureSensorInited() {
     if (s_sensor != nullptr && s_sensor_init) return;
     if (s_sensor == nullptr) {
-        i2c_master_bus_handle_t bus = metalio_claw_4_get_i2c_bus();
+        i2c_master_bus_handle_t bus = board_get_i2c_bus();
         if (bus == nullptr) {
             ESP_LOGE(TAG, "I2C bus 未就绪，跳过 SC7A20H 初始化");
             s_sensor_init = false;
@@ -501,7 +501,7 @@ void ShowCalibrationDialog() {
     screen_swipe_back_ignore(mask, true);
 
     // ---- 中央卡片 ----
-    constexpr int kCardW = 580;
+    constexpr int kCardW = (kPanelW - 32 < 580) ? kPanelW - 32 : 580;
     constexpr int kCardH = 320;
     lv_obj_t* card = lv_obj_create(mask);
     s_ui.dialog_card = card;
@@ -538,7 +538,9 @@ void ShowCalibrationDialog() {
     // ---- 取消按钮 ----
     lv_obj_t* cancel = lv_button_create(card);
     s_ui.dialog_cancel = cancel;
-    lv_obj_set_size(cancel, 200, 70);
+    constexpr int kDialogGap = 16;
+    constexpr int kDialogBtnW = (kCardW - 60 - kDialogGap) / 2;
+    lv_obj_set_size(cancel, kDialogBtnW, 70);
     lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 30, -24);
     lv_obj_set_style_radius(cancel, 28, LV_PART_MAIN);
     lv_obj_set_style_bg_color(cancel, lv_color_hex(0x2A2F3A), LV_PART_MAIN);
@@ -553,7 +555,7 @@ void ShowCalibrationDialog() {
     // ---- 确认/开始 按钮 ----
     lv_obj_t* ok = lv_button_create(card);
     s_ui.dialog_ok_btn = ok;
-    lv_obj_set_size(ok, 260, 70);
+    lv_obj_set_size(ok, kDialogBtnW, 70);
     lv_obj_align(ok, LV_ALIGN_BOTTOM_RIGHT, -30, -24);
     lv_obj_set_style_radius(ok, 28, LV_PART_MAIN);
     lv_obj_set_style_bg_color(ok, lv_color_hex(0x3B82F6), LV_PART_MAIN);
@@ -780,10 +782,12 @@ void BuildFooter(lv_obj_t* parent) {
     lv_obj_set_style_text_align(xyz, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
     // ---- 底部两个操作按钮 ----
-    constexpr int kBtnW   = 280;
+    constexpr int kBtnGap = 16;
+    constexpr int kBtnW   = ((kPanelW - 48 - kBtnGap) / 2 < 280)
+                                ? (kPanelW - 48 - kBtnGap) / 2
+                                : 280;
     constexpr int kBtnH   = 70;
     constexpr int kBtnY   = kPanelH - kBtnH - 12;
-    constexpr int kBtnGap = 24;
     constexpr int kBtnTotalW = kBtnW * 2 + kBtnGap;
     constexpr int kBtnStartX = (kPanelW - kBtnTotalW) / 2;
 
@@ -844,8 +848,9 @@ lv_obj_t* LevelScreen::Create() {
 
     s_ui.sample_timer = lv_timer_create(OnSampleTick, kSamplePeriodMs, nullptr);
 
-    screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
+    screen_mark_native_layout(scr);
+    screen_attach_swipe_back(scr, OnSwipeBack);
 
     ESP_LOGI(TAG, "level screen ready (sensor=%s)", s_sensor_init ? "ok" : "absent");
     return scr;
@@ -862,9 +867,5 @@ void LevelScreen::LifecycleCallback(screen_lifecycle_event_t event) {
         // 不动 SC7A20H 配置，下一次进入页面再用。
     }
 }
-
-
-
-
 
 

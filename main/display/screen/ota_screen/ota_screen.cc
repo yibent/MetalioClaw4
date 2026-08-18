@@ -7,6 +7,7 @@
 #include <esp_timer.h>
 
 #include "assets/lang_config.h"
+#include "config.h"
 #include "esp_lv_adapter.h"
 #include "home_screen/home_screen.h"
 #include "screen_util.h"
@@ -17,8 +18,9 @@ LV_FONT_DECLARE(font_puhui_30_4);
 namespace {
 
 constexpr const char* TAG = "OtaScreen";
-constexpr int kPanelSize = 720;
-constexpr int kBarWidth = 560;
+constexpr int kPanelW = DISPLAY_WIDTH;
+constexpr int kPanelH = DISPLAY_HEIGHT;
+constexpr int kBarWidth = (DISPLAY_WIDTH - 32 < 560) ? DISPLAY_WIDTH - 32 : 560;
 constexpr int kBarHeight = 16;
 
 struct OtaUi {
@@ -83,7 +85,7 @@ void OnScreenDeleted(lv_event_t* e) {
 lv_obj_t* CreateTouchBlocker(lv_obj_t* parent) {
     lv_obj_t* blocker = lv_obj_create(parent);
     screen_strip_obj_chrome(blocker);
-    lv_obj_set_size(blocker, kPanelSize, kPanelSize);
+    lv_obj_set_size(blocker, kPanelW, kPanelH);
     lv_obj_align(blocker, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_opa(blocker, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_add_flag(blocker, LV_OBJ_FLAG_CLICKABLE);
@@ -94,7 +96,7 @@ lv_obj_t* CreateTouchBlocker(lv_obj_t* parent) {
 lv_obj_t* BuildScreen(const char* version_text) {
     lv_obj_t* screen = lv_obj_create(nullptr);
     screen_strip_obj_chrome(screen);
-    lv_obj_set_size(screen, kPanelSize, kPanelSize);
+    lv_obj_set_size(screen, kPanelW, kPanelH);
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x0A0D12), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
@@ -172,6 +174,7 @@ lv_obj_t* BuildScreen(const char* version_text) {
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -80);
 
     CreateTouchBlocker(screen);
+    screen_mark_native_layout(screen);
     lv_obj_add_event_cb(screen, OnScreenDeleted, LV_EVENT_DELETE, nullptr);
     return screen;
 }

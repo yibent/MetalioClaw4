@@ -12,6 +12,21 @@ void screen_make_input_passive(lv_obj_t* obj);
 // from a generic container that we are using purely for layout.
 void screen_strip_obj_chrome(lv_obj_t* obj);
 
+// Fit a legacy 720x720 screen tree to the active display. The existing apps
+// use absolute coordinates authored for the square panel; this helper moves
+// their completed child tree into a transform canvas so rendering and LVGL's
+// inverse hit-testing are scaled together. On a 720x720 display it is a no-op.
+void screen_fit_legacy_720(lv_obj_t* screen);
+
+// Mark a screen whose widgets already use the active display's dimensions.
+// Navigation helpers will leave such a screen at its native size instead of
+// applying the legacy 720x720 transform.
+void screen_mark_native_layout(lv_obj_t* screen);
+
+// Return true after screen_fit_legacy_720() has installed its legacy canvas.
+// Dynamic overlays can use this to choose between 720x720 and native geometry.
+bool screen_is_legacy_fitted(const lv_obj_t* screen);
+
 // Attach a right-swipe-to-back gesture to `scr`. When the user presses on
 // the screen and releases at least `kSwipeBackThreshold` px to the right
 // (with smaller vertical movement than horizontal), `on_back` is invoked.

@@ -1,13 +1,38 @@
 #include "screen_util.h"
 
+#include <algorithm>
 #include <cstdlib>
 
 #include "esp_log.h"
 
 namespace {
 
+void legacy_child_created_cb(lv_event_t* e) {
+    lv_obj_t* screen = lv_event_get_current_target_obj(e);
+    lv_obj_t* canvas = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+    if (screen == nullptr || canvas == nullptr) {
+        return;
+    }
+
+    // CHILD_CREATED bubbles through every ancestor. Use the event parameter
+    // and only move a child whose original parent is this screen; otherwise
+    // constructing a nested widget could accidentally reparent an unrelated
+    // existing direct child of the screen.
+    lv_obj_t* child = static_cast<lv_obj_t*>(lv_event_get_param(e));
+    if (child == nullptr || child == canvas ||
+        lv_obj_get_parent(child) != screen) {
+        return;
+    }
+    const int32_t x = lv_obj_get_x(child);
+    const int32_t y = lv_obj_get_y(child);
+    lv_obj_set_parent(child, canvas);
+    lv_obj_set_pos(child, x, y);
+}
+
 // 720x720 panel -> use a slightly larger threshold than the 480p source.
 constexpr int16_t kSwipeBackThreshold = 80;
+constexpr lv_obj_flag_t kLegacyFitAppliedFlag = LV_OBJ_FLAG_USER_4;
+constexpr lv_obj_flag_t kNativeLayoutFlag = LV_OBJ_FLAG_USER_3;
 
 struct SwipeState {
     int16_t start_x = 0;
@@ -170,6 +195,97 @@ void screen_strip_obj_chrome(lv_obj_t* obj) {
     lv_obj_set_scrollbar_mode(obj, LV_SCROLLBAR_MODE_OFF);
 }
 
+void screen_fit_legacy_720(lv_obj_t* screen) {
+    if (screen == nullptr) {
+        return;
+    }
+    if (lv_obj_has_flag(screen, kNativeLayoutFlag)) {
+        return;
+    }
+    if (lv_obj_has_flag(screen, kLegacyFitAppliedFlag)) {
+        return;
+    }
+
+    lv_display_t* display = lv_obj_get_display(screen);
+    if (display == nullptr) {
+        return;
+    }
+
+    const int32_t width = lv_display_get_horizontal_resolution(display);
+    const int32_t height = lv_display_get_vertical_resolution(display);
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+
+    // Preserve the original 720 px geometry whenever it already fits. This
+    // keeps the existing 720x720 board pixel-identical.
+    const uint32_t scale_x = static_cast<uint32_t>(width * 256 / 720);
+    const uint32_t scale_y = static_cast<uint32_t>(height * 256 / 720);
+    const uint32_t scale = std::min(scale_x, scale_y);
+    if (scale >= 256) {
+        // Legacy screens often set their root object to 720x720. Keep the
+        // root covering the whole physical display even when no downscale is
+        // needed, so portrait displays never leave an uncovered strip.
+        lv_obj_set_size(screen, width, height);
+        return;
+    }
+
+    lv_obj_add_flag(screen, kLegacyFitAppliedFlag);
+
+    lv_obj_update_layout(screen);
+    const uint32_t child_count = lv_obj_get_child_count(screen);
+
+    lv_obj_t* canvas = lv_obj_create(screen);
+    lv_obj_remove_style_all(canvas);
+    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_SCROLLABLE);
+    // The active screen may use flex/grid layout. Keep the transform canvas
+    // at the explicitly computed centered position instead of letting the
+    // parent layout move it after set_pos().
+    lv_obj_add_flag(canvas, LV_OBJ_FLAG_FLOATING);
+    lv_obj_add_flag(canvas, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_set_size(canvas, 720, 720);
+    lv_obj_set_style_transform_pivot_x(canvas, 0, LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(canvas, 0, LV_PART_MAIN);
+    lv_obj_set_style_transform_scale(canvas, scale, LV_PART_MAIN);
+
+    const int32_t scaled_width = 720 * static_cast<int32_t>(scale) / 256;
+    const int32_t scaled_height = 720 * static_cast<int32_t>(scale) / 256;
+    lv_obj_set_pos(canvas, (width - scaled_width) / 2,
+                   (height - scaled_height) / 2);
+
+    // Move the already-laid-out children in their original order. Reapply
+    // their resolved coordinates because set_parent changes the coordinate
+    // ancestry; this also neutralizes any screen-level flex layout.
+    for (uint32_t i = 0; i < child_count; ++i) {
+        lv_obj_t* child = lv_obj_get_child(screen, 0);
+        if (child == nullptr || child == canvas) {
+            break;
+        }
+        const int32_t x = lv_obj_get_x(child);
+        const int32_t y = lv_obj_get_y(child);
+        lv_obj_set_parent(child, canvas);
+        lv_obj_set_pos(child, x, y);
+    }
+
+    lv_obj_update_layout(canvas);
+    // The root is the physical display surface; the 720x720 legacy canvas is
+    // the only object that is intentionally smaller on portrait panels.
+    lv_obj_set_size(screen, width, height);
+    lv_obj_add_event_cb(screen, legacy_child_created_cb, LV_EVENT_CHILD_CREATED,
+                        canvas);
+}
+
+void screen_mark_native_layout(lv_obj_t* screen) {
+    if (screen == nullptr) {
+        return;
+    }
+    lv_obj_add_flag(screen, kNativeLayoutFlag);
+}
+
+bool screen_is_legacy_fitted(const lv_obj_t* screen) {
+    return screen != nullptr && lv_obj_has_flag(screen, kLegacyFitAppliedFlag);
+}
+
 void screen_swipe_back_ignore(lv_obj_t* obj, bool recursive) {
     if (obj == nullptr) {
         return;
@@ -186,6 +302,10 @@ void screen_swipe_back_ignore(lv_obj_t* obj, bool recursive) {
 
 void screen_attach_swipe_back(lv_obj_t* scr, screen_swipe_back_cb_t on_back) {
     if (scr == nullptr) return;
+    // Some apps do not need a lifecycle callback, but they still use this
+    // common navigation hook. Fit them here so every legacy app gets the same
+    // bounds protection as screens launched with screen_attach_lifecycle().
+    screen_fit_legacy_720(scr);
     lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
     void* user_data = reinterpret_cast<void*>(on_back);
     lv_obj_add_event_cb(scr, swipe_back_event_cb, LV_EVENT_PRESSED,
@@ -232,9 +352,18 @@ void lifecycle_unloaded_cb(lv_event_t* e) {
 }  // namespace
 
 void screen_attach_lifecycle(lv_obj_t* scr, screen_lifecycle_cb_t cb) {
-    if (scr == nullptr || cb == nullptr) {
+    if (scr == nullptr) {
         return;
     }
+    // Home launchers attach lifecycle tracking immediately after Create(),
+    // making this the common point to fit legacy app trees before display.
+    // Standby and nested test/settings screens use the same hook.
+    screen_fit_legacy_720(scr);
+
+    if (cb == nullptr) {
+        return;
+    }
+
     void* user_data = reinterpret_cast<void*>(cb);
     lv_obj_add_event_cb(scr, lifecycle_loaded_cb, LV_EVENT_SCREEN_LOADED,
                         user_data);

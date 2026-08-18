@@ -3,12 +3,11 @@
 
 #include <cstdio>
 
+#include "board_hardware.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "i2c_device.h"
 #include "test_ui_common.h"
-
-extern "C" i2c_master_bus_handle_t metalio_claw_4_get_i2c_bus();
 
 namespace {
 
@@ -81,7 +80,7 @@ void EnsureSensor() {
         return;
     }
 
-    i2c_master_bus_handle_t bus = metalio_claw_4_get_i2c_bus();
+    i2c_master_bus_handle_t bus = board_get_i2c_bus();
     if (bus == nullptr) {
         ESP_LOGE(TAG, "I2C bus not ready");
         s_sensor_ok = false;

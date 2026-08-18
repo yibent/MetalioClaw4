@@ -37,21 +37,12 @@
 #include "esp_lcd_panel_io.h"
 
 #include "IOExpander.hpp"
+#include "board_hardware.h"
+#include "config.h"
 #include "SdCardManager.hpp"
 #include "home_screen/home_screen.h"
 #include "jpg/image_to_jpeg.h"
 #include "screen_util.h"
-
-// 由 boards/metalio-claw-4/esp_lcd_nv3051f.c 提供：重发 NV3051F 厂商初始化序列。
-// 这里前向声明，避免把 board 私有头加进 INCLUDE_DIRS。
-extern "C" esp_err_t esp_lcd_nv3051f_replay_vendor_init(esp_lcd_panel_io_handle_t io);
-
-// 由 boards/metalio-claw-4/metalio-claw-4.cc 提供：返回 NV3051F 面板 IO 句柄。
-extern "C" esp_lcd_panel_io_handle_t metalio_claw_4_get_panel_io();
-
-// 由 boards/metalio-claw-4/metalio-claw-4.cc 提供：返回板上 I2C_NUM_1 主控总线句柄。
-// 摄像头 SCCB 复用这个 handle，避免在同一对 GPIO (7/8) 上同时挂两个 I2C 控制器。
-extern "C" i2c_master_bus_handle_t metalio_claw_4_get_i2c_bus();
 
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_30_4);
@@ -61,13 +52,14 @@ namespace {
 constexpr const char* TAG = "CameraScreen";
 
 // ---------- 屏幕分区 ----------
-// 720x720 屏幕被纵向切成两条：上 720x600 摄像头预览，下 720x120 按钮区。
-constexpr int kPanelW       = 720;
-constexpr int kPanelH       = 720;
-constexpr int kCameraAreaW  = 720;
-constexpr int kCameraAreaH  = 600;
-constexpr int kButtonStripH = kPanelH - kCameraAreaH;     // 120
-constexpr int kButtonStripY = kCameraAreaH;               // 600
+// The preview and controls share the native portrait panel. Keep the control
+// strip proportional so the camera canvas fills the remaining area.
+constexpr int kPanelW       = DISPLAY_WIDTH;
+constexpr int kPanelH       = DISPLAY_HEIGHT;
+constexpr int kButtonStripH = (DISPLAY_HEIGHT >= 800) ? 144 : 120;
+constexpr int kCameraAreaW  = kPanelW;
+constexpr int kCameraAreaH  = kPanelH - kButtonStripH;
+constexpr int kButtonStripY = kCameraAreaH;
 constexpr int kGalleryHeaderH = 90;
 constexpr int kPad = 16;
 
@@ -99,12 +91,12 @@ enum class ViewMode {
 // 才唤醒”，必须显式给足等待时间。
 constexpr int kCamPowerOnSettleMs   = 200;   // CAM_PWDN low -> XCLK start 之前
 constexpr int kCamXclkSettleMs      = 50;    // XCLK start -> esp_video_init 之间
-constexpr int kCamResetRecoverMs    = 120;   // GPIO3 复位脉冲 -> LCD vendor init 重发
+constexpr int kCamResetRecoverMs    = 120;   // camera init -> board-specific LCD recovery
 constexpr int kCamWorkerStopMs      = 3000;
 
 // MIPI-CSI / OV2710 引脚（板上硬件接线，与例程 example_video_common.h 完全一致）
-// 注意：摄像头 SCCB 不能新建 I2C 控制器，必须复用 metalio_claw_4_get_i2c_bus()
-// 返回的 I2C_NUM_1 主控（GPIO 7/8 上还挂着 GT911 触摸和 TCA9555 IO 扩展器）。
+// 注意：摄像头 SCCB 不能新建 I2C 控制器，必须复用 board_get_i2c_bus()
+// 返回的板级主控总线，避免同一物理总线上出现两个控制器。
 constexpr int kSccbI2cFreq   = 100000;
 constexpr int kCamXclkPin    = 32;          // ESP_CLOCK_ROUTER -> GPIO32 输出 24MHz XCLK
 constexpr int kCamXclkFreq   = 24000000;
@@ -223,7 +215,7 @@ inline void yuv422_to_rgb888(const uint8_t* src, const CameraDev* cam,
                               cam->crop_offset_x * 2;
     const int row_bytes = cam->width * 2;
     // 旋转 180°：从最后一行的最右侧像素对开始反向遍历；YUV422 必须以
-    // “像素对”为单位回退，否则 U/V 会错位。kCameraAreaW=720 是偶数，安全。
+    // “像素对”为单位回退，否则 U/V 会错位。原生面板宽度保持偶数，安全。
     const uint8_t* src_row = src_base + (kCameraAreaH - 1) * row_bytes +
                              (kCameraAreaW - 2) * 2;
     for (uint32_t y = 0; y < kCameraAreaH; y++) {
@@ -312,9 +304,9 @@ esp_err_t init_video_pipeline() {
 
     // 摄像头 SCCB 复用板上 I2C_NUM_1 主控（GPIO 7/8）。GT911 触摸和 TCA9555
     // IO 扩展器都挂在这条总线上；OV2710 (默认 SCCB 地址 0x36) 不会和它们冲突。
-    i2c_master_bus_handle_t bus = metalio_claw_4_get_i2c_bus();
+    i2c_master_bus_handle_t bus = board_get_i2c_bus();
     if (bus == nullptr) {
-        ESP_LOGE(TAG, "metalio_claw_4_get_i2c_bus() returned NULL");
+        ESP_LOGE(TAG, "board_get_i2c_bus() returned NULL");
         esp_cam_sensor_xclk_stop(s_xclk_handle);
         esp_cam_sensor_xclk_free(s_xclk_handle);
         s_xclk_handle = nullptr;
@@ -990,20 +982,14 @@ void camera_worker_task(void* /*arg*/) {
         goto cleanup_power;
     }
 
-    // 摄像头驱动会拉低 GPIO 3（与 LCD RST 共用），导致 LCD 控制器寄存器丢失。
-    // 这里等待复位结束并重发 NV3051F vendor 初始化序列。
+    // 摄像头可能会复位 LCD 控制器；由板级实现恢复对应面板状态。
     vTaskDelay(pdMS_TO_TICKS(kCamResetRecoverMs));
     {
-        esp_lcd_panel_io_handle_t panel_io = metalio_claw_4_get_panel_io();
-        if (panel_io != nullptr) {
-            esp_err_t r = esp_lcd_nv3051f_replay_vendor_init(panel_io);
-            if (r != ESP_OK) {
-                ESP_LOGW(TAG, "replay LCD vendor init failed: %s", esp_err_to_name(r));
-            } else {
-                ESP_LOGI(TAG, "LCD recovered after camera reset pulse");
-            }
+        esp_err_t r = board_recover_lcd_after_camera();
+        if (r != ESP_OK) {
+            ESP_LOGW(TAG, "LCD recovery skipped/failed: %s", esp_err_to_name(r));
         } else {
-            ESP_LOGW(TAG, "panel_io handle is NULL, skip LCD replay");
+            ESP_LOGI(TAG, "LCD recovery after camera initialization complete");
         }
     }
 
@@ -1232,7 +1218,7 @@ lv_obj_t* CameraScreen::Create() {
     s_photo_frozen = false;
     s_save_in_progress = false;
 
-    // canvas 缓冲：720x600 RGB888，1.296 MB。一次申请、永不释放（重复进入摄像头屏幕
+    // canvas 缓冲：原生预览区 RGB888。一次申请、永不释放（重复进入摄像头屏幕
     // 时复用），避免反复 1.3MB 大块 PSRAM 分配抖动。
     const size_t out_size = static_cast<size_t>(kCameraAreaW) * kCameraAreaH * 3;
     if (s_canvas_buf == nullptr) {
@@ -1255,7 +1241,7 @@ lv_obj_t* CameraScreen::Create() {
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ----- 相机预览区（720x600） -----
+    // ----- 相机预览区 -----
     lv_obj_t* camera_panel = lv_obj_create(scr);
     s_ui.camera_panel = camera_panel;
     screen_strip_obj_chrome(camera_panel);
@@ -1350,7 +1336,7 @@ lv_obj_t* CameraScreen::Create() {
     lv_obj_set_style_text_font(viewer_del_lbl, &font_puhui_30_4, LV_PART_MAIN);
     lv_obj_center(viewer_del_lbl);
 
-    // ----- 底部按钮区（720x120 黑底） -----
+    // ----- 底部按钮区 -----
     lv_obj_t* strip = lv_obj_create(scr);
     s_ui.bottom_strip = strip;
     screen_strip_obj_chrome(strip);
@@ -1396,6 +1382,7 @@ lv_obj_t* CameraScreen::Create() {
     lv_obj_set_style_text_font(lbl, &font_puhui_30_4, LV_PART_MAIN);
     lv_obj_center(lbl);
 
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, on_screen_unloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
 

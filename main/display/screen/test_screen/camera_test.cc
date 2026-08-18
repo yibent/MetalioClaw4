@@ -1,9 +1,11 @@
 #include "camera_test.h"
 #include "i18n.h"
 
+#include <algorithm>
 #include <cstdio>
 
 #include "IOExpander.hpp"
+#include "board_hardware.h"
 #include "camera_screen/camera_screen.h"
 #include "driver/i2c_master.h"
 #include "esp_cam_sensor_xclk.h"
@@ -16,8 +18,6 @@
 
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_30_4);
-
-extern "C" i2c_master_bus_handle_t metalio_claw_4_get_i2c_bus();
 
 namespace {
 
@@ -35,9 +35,6 @@ constexpr uint8_t  kOv2710PidH         = 0x27;
 constexpr uint8_t  kOv2710PidL         = 0x10;
 
 constexpr uint32_t kColorBtnIdle = 0x2563EB;
-constexpr int      kPreviewAreaW = 720;
-constexpr int      kPreviewAreaH = 600;
-constexpr int      kPreviewStripH = 120;
 
 lv_obj_t* s_status_icon  = nullptr;
 lv_obj_t* s_value_lbl    = nullptr;
@@ -77,7 +74,7 @@ bool EnsureSccbDevice() {
         return true;
     }
 
-    i2c_master_bus_handle_t bus = metalio_claw_4_get_i2c_bus();
+    i2c_master_bus_handle_t bus = board_get_i2c_bus();
     if (bus == nullptr) {
         ESP_LOGE(TAG, "I2C bus not ready");
         return false;
@@ -202,9 +199,16 @@ void OpenPreviewOverlay() {
     lv_obj_remove_flag(mask, LV_OBJ_FLAG_SCROLLABLE);
     screen_swipe_back_ignore(mask, true);
 
+    // CameraScreen prepares a buffer sized for the active panel's preview
+    // area (for example 480x656 on the 480x800 board). Use that native size
+    // directly instead of placing a fixed square-panel canvas in the overlay.
+    const int preview_w = preview_buf.width;
+    const int preview_h = preview_buf.height;
+    const int strip_h = std::max(0, kTestPanelH - preview_h);
+
     lv_obj_t* canvas_host = lv_obj_create(mask);
     screen_strip_obj_chrome(canvas_host);
-    lv_obj_set_size(canvas_host, kPreviewAreaW, kPreviewAreaH);
+    lv_obj_set_size(canvas_host, preview_w, preview_h);
     lv_obj_set_pos(canvas_host, 0, 0);
     lv_obj_set_style_bg_color(canvas_host, lv_color_black(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(canvas_host, LV_OPA_COVER, LV_PART_MAIN);
@@ -220,8 +224,8 @@ void OpenPreviewOverlay() {
 
     lv_obj_t* strip = lv_obj_create(mask);
     screen_strip_obj_chrome(strip);
-    lv_obj_set_size(strip, kTestPanelW, kPreviewStripH);
-    lv_obj_set_pos(strip, 0, kPreviewAreaH);
+    lv_obj_set_size(strip, kTestPanelW, strip_h);
+    lv_obj_set_pos(strip, 0, preview_h);
     lv_obj_set_style_bg_color(strip, lv_color_hex(kTestColorCardBg),
                               LV_PART_MAIN);
     lv_obj_set_style_bg_opa(strip, LV_OPA_COVER, LV_PART_MAIN);
@@ -279,7 +283,7 @@ bool TryDetectSensorId() {
         return true;
     }
 
-    if (i2c_master_probe(metalio_claw_4_get_i2c_bus(), kOv2710Addr, 200) !=
+    if (i2c_master_probe(board_get_i2c_bus(), kOv2710Addr, 200) !=
         ESP_OK) {
         SetErrorText(I18n::T("SCCB无应答"));
         ESP_LOGW(TAG, "SCCB probe @0x36 failed");

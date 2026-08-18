@@ -17,6 +17,7 @@
 #include "test_ui_common.h"
 #include "vibrate_motor_test.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -434,13 +435,21 @@ void PauseBgMusicForPhase() {
 }
 
 void CleanupStressDemoWidgets() {
-    if (s_screen == nullptr) {
+    if (s_screen == nullptr || s_setup_panel == nullptr) {
+        return;
+    }
+
+    // The stress widgets are siblings of s_setup_panel under the native
+    // screen root. Clean that owner while preserving the setup panel and its
+    // navigation hooks.
+    lv_obj_t* owner = lv_obj_get_parent(s_setup_panel);
+    if (owner == nullptr) {
         return;
     }
 
     uint32_t i = 0;
-    while (i < lv_obj_get_child_count(s_screen)) {
-        lv_obj_t* child = lv_obj_get_child(s_screen, i);
+    while (i < lv_obj_get_child_count(owner)) {
+        lv_obj_t* child = lv_obj_get_child(owner, i);
         if (child == s_setup_panel) {
             ++i;
             continue;
@@ -494,8 +503,22 @@ void StartCameraPreview() {
     s_cam_canvas = lv_canvas_create(s_cam_overlay);
     lv_canvas_set_buffer(s_cam_canvas, preview_buf.data, preview_buf.width,
                          preview_buf.height, LV_COLOR_FORMAT_RGB888);
+    // The stress preview lives on lv_layer_top() and is already outside the
+    // test screen tree. Keep the camera buffer in its native panel layout and
+    // scale only when the prepared buffer is larger than the physical panel.
     lv_obj_set_size(s_cam_canvas, preview_buf.width, preview_buf.height);
-    lv_obj_center(s_cam_canvas);
+    const uint32_t scale_x = static_cast<uint32_t>(LV_HOR_RES) * 256 /
+                             std::max(1, preview_buf.width);
+    const uint32_t scale_y = static_cast<uint32_t>(LV_VER_RES) * 256 /
+                             std::max(1, preview_buf.height);
+    const uint32_t scale = std::min(scale_x, scale_y);
+    const int32_t rendered_w = preview_buf.width * static_cast<int32_t>(scale) / 256;
+    const int32_t rendered_h = preview_buf.height * static_cast<int32_t>(scale) / 256;
+    lv_obj_set_style_transform_pivot_x(s_cam_canvas, 0, LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(s_cam_canvas, 0, LV_PART_MAIN);
+    lv_obj_set_style_transform_scale(s_cam_canvas, scale, LV_PART_MAIN);
+    lv_obj_set_pos(s_cam_canvas, (LV_HOR_RES - rendered_w) / 2,
+                   (LV_VER_RES - rendered_h) / 2);
     screen_make_input_passive(s_cam_canvas);
 
     if (CameraScreen::StartExternalPreview(s_cam_canvas) != ESP_OK) {
@@ -632,13 +655,17 @@ lv_obj_t* StressTestScreen::Create() {
     lv_obj_t* scr = lv_obj_create(nullptr);
     s_screen = scr;
     screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, LV_HOR_RES, LV_VER_RES);
+    // The setup UI and the stress widgets use the active panel coordinate
+    // space. The camera phase is a separate lv_layer_top() overlay and also
+    // remains native-sized.
+    lv_obj_set_size(scr, kTestPanelW, kTestPanelH);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kTestColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     BuildSetupPanel(scr);
 
+    screen_mark_native_layout(scr);
     screen_attach_lifecycle(scr, stress_test_lifecycle_cb);
     screen_attach_swipe_back(scr, OnSwipeBackToMenu);
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED,

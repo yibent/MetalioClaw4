@@ -9,6 +9,7 @@
 #include "backlight.h"
 #include "bluetooth_screen/bluetooth_screen.h"
 #include "board.h"
+#include "config.h"
 #include "cx25601n.h"
 #include "home_screen/home_screen.h"
 #include "i18n.h"
@@ -23,13 +24,14 @@ namespace {
 
 constexpr const char* TAG = "SettingsScreen";
 
-constexpr int kPanelSize = 720;
+constexpr int kPanelW = DISPLAY_WIDTH;
+constexpr int kPanelH = DISPLAY_HEIGHT;
 constexpr int kHeaderH = 90;
 constexpr int kBackBtnSize = 72;
 constexpr int kTabBarW = 120;
 constexpr int kTabItemH = 64;
 constexpr int kTabItemGap = 10;
-constexpr int kBodyH = kPanelSize - kHeaderH;
+constexpr int kBodyH = kPanelH - kHeaderH;
 
 constexpr uint32_t kColorBg = 0x0E1116;
 constexpr uint32_t kColorText = 0xFFFFFF;
@@ -378,7 +380,7 @@ void BuildVolumeTab(lv_obj_t* tab, int initial_volume) {
 void BuildHeader(lv_obj_t* parent) {
     lv_obj_t* header = lv_obj_create(parent);
     screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelSize, kHeaderH);
+    lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -635,7 +637,7 @@ void BuildTabView(lv_obj_t* parent) {
 
     lv_obj_t* tv = lv_tabview_create(parent);
     s_ui.tabview = tv;
-    lv_obj_set_size(tv, kPanelSize, kBodyH);
+    lv_obj_set_size(tv, kPanelW, kBodyH);
     lv_obj_set_pos(tv, 0, kHeaderH);
     lv_tabview_set_tab_bar_position(tv, LV_DIR_LEFT);
     lv_tabview_set_tab_bar_size(tv, kTabBarW);
@@ -721,7 +723,7 @@ lv_obj_t* SettingsScreen::Create() {
     lv_obj_t* scr = lv_obj_create(nullptr);
     s_ui.screen = scr;
     screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelSize, kPanelSize);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -729,6 +731,7 @@ lv_obj_t* SettingsScreen::Create() {
     BuildHeader(scr);
     BuildTabView(scr);
 
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
 

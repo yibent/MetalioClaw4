@@ -154,8 +154,25 @@ void Es8311AudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gp
 }
 
 void Es8311AudioCodec::SetOutputVolume(int volume) {
-    ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, volume));
+    if (volume < 0) {
+        volume = 0;
+    } else if (volume > 100) {
+        volume = 100;
+    }
+
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    // The device handle is created lazily and may be absent while system
+    // audio is paused. Keep the requested value in AudioCodec so it is
+    // applied by UpdateDeviceState() when the device is opened again.
     AudioCodec::SetOutputVolume(volume);
+    if (dev_ == nullptr) {
+        return;
+    }
+
+    const esp_err_t err = esp_codec_dev_set_out_vol(dev_, volume);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "set output volume failed: %s", esp_err_to_name(err));
+    }
 }
 
 void Es8311AudioCodec::EnableInput(bool enable) {

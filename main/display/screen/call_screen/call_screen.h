@@ -5,7 +5,7 @@
 
 class CallScreen {
 public:
-    // Create a 720x720 fullscreen phone-dialer page.
+    // Create a fullscreen phone-dialer page sized for the active panel.
     // Returns a new LVGL screen object (parent = NULL); the caller is
     // responsible for loading it via lv_screen_load().
     // The page contains a dial keypad (1-9, 0 centered) with a larger

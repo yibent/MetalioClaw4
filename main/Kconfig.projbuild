@@ -106,10 +106,19 @@ choice
         bool "Serbian"
 endchoice
 
-config BOARD_TYPE_METALIO_CLAW_4
-    bool "Metalio Claw4 (metalio-claw-4)"
-    default y
-    depends on IDF_TARGET_ESP32P4
+choice
+    prompt "Board Type"
+    default BOARD_TYPE_FANGTANG_JC4880P443
+    help
+        Select the board type
+
+    config BOARD_TYPE_FANGTANG_JC4880P443
+        bool "Fangtang JC4880P443 (fangtang-jc4880p443)"
+        depends on IDF_TARGET_ESP32P4
+    config BOARD_TYPE_METALIO_CLAW_4
+        bool "Metalio Claw4 (metalio-claw-4)"
+        depends on IDF_TARGET_ESP32P4
+endchoice
 
 choice DISPLAY_STYLE
     prompt "Select display style"

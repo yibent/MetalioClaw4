@@ -134,6 +134,7 @@ endfunction()
 # Set default BUILTIN_TEXT_FONT and BUILTIN_ICON_FONT
 set(BUILTIN_TEXT_FONT font_puhui_14_1)
 set(BUILTIN_ICON_FONT font_awesome_14_1)
+set(DESKTOP_APP_ICON_SIZE 128)
 
 # Add board files according to BOARD_TYPE
 if(CONFIG_BOARD_TYPE_METALIO_CLAW_4)
@@ -141,6 +142,12 @@ if(CONFIG_BOARD_TYPE_METALIO_CLAW_4)
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_FANGTANG_JC4880P443)
+    set(BOARD_TYPE "fangtang-jc4880p443")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
+    set(BUILTIN_ICON_FONT font_awesome_20_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+    set(DESKTOP_APP_ICON_SIZE 88)
 endif()
 
 file(GLOB BOARD_SOURCES
@@ -331,6 +338,7 @@ endif()
 target_compile_definitions(${COMPONENT_LIB}
                     PRIVATE BOARD_TYPE=\"${BOARD_TYPE}\" BOARD_NAME=\"${BOARD_NAME}\"
                     PRIVATE BUILTIN_TEXT_FONT=${BUILTIN_TEXT_FONT} BUILTIN_ICON_FONT=${BUILTIN_ICON_FONT}
+                    PRIVATE DESKTOP_APP_ICON_SIZE=${DESKTOP_APP_ICON_SIZE}
                     )
 
 # Add generation rules
@@ -507,14 +515,37 @@ else()
     message(STATUS "Assets partition not found, using v1 partition table")
 endif()
 
+# SPNG is decoded a slice at a time and cannot be scaled by LVGL. Normalize
+# desktop icons before packaging so their encoded dimensions match the active
+# board's home-screen layout. Other image assets keep their source dimensions.
+idf_build_get_property(python PYTHON)
+set(PREPARED_RESOURCE_ASSETS_DIR "${CMAKE_BINARY_DIR}/prepared_xingzhi-assets")
+file(GLOB RESOURCE_ASSET_INPUTS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/xingzhi-assets/*")
+add_custom_target(prepare_resource_assets
+    COMMAND ${python}
+            "${PROJECT_DIR}/scripts/spiffs_assets/prepare_spng_assets.py"
+            --source "${CMAKE_CURRENT_SOURCE_DIR}/xingzhi-assets"
+            --output "${PREPARED_RESOURCE_ASSETS_DIR}"
+            --icon-glob "ic_app_home_theme*.png"
+            --icon-size "${DESKTOP_APP_ICON_SIZE}"
+            --native-copy-glob "ic_app_home_theme*_theme.png"
+            --native-copy-suffix "_preview"
+    DEPENDS
+        "${PROJECT_DIR}/scripts/spiffs_assets/prepare_spng_assets.py"
+        ${RESOURCE_ASSET_INPUTS}
+    COMMENT "Preparing resolution-specific desktop icons for SPNG conversion"
+    VERBATIM)
+
 spiffs_create_partition_assets(
     resources
-    "./xingzhi-assets"
+    "${PREPARED_RESOURCE_ASSETS_DIR}"
     FLASH_IN_PROJECT
     MMAP_FILE_SUPPORT_FORMAT ".jpg,.png,.eaf"
     MMAP_SUPPORT_SJPG
     MMAP_SUPPORT_SPNG
     MMAP_SPLIT_HEIGHT 16
 ) 
+add_dependencies(assets_resources_bin prepare_resource_assets)
 
 spiffs_create_partition_image(factory_test ./factory-test-assets FLASH_IN_PROJECT DEPENDS)

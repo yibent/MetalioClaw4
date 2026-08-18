@@ -1,0 +1,21 @@
+{
+    "target": "esp32p4",
+    "builds": [
+        {
+            "name": "fangtang-jc4880p443",
+            "sdkconfig_append": [
+                "CONFIG_SLAVE_IDF_TARGET_ESP32C6=y",
+                "CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6=y",
+                "CONFIG_ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD=y",
+                "CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y",
+                "CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CMD_SLOT_1=19",
+                "CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CLK_SLOT_1=18",
+                "CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D0_SLOT_1=14",
+                "CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D1_4BIT_BUS_SLOT_1=15",
+                "CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D2_4BIT_BUS_SLOT_1=16",
+                "CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D3_4BIT_BUS_SLOT_1=17",
+                "CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54"
+            ]
+        }
+    ]
+}

@@ -19,6 +19,7 @@
 #include "audio_codec.h"
 #include "board.h"
 #include "home_screen/home_screen.h"
+#include "config.h"
 #include "screen_util.h"
 
 #include "esp_audio_simple_player.h"
@@ -46,7 +47,8 @@ namespace {
 constexpr const char* TAG = "RadioScreen";
 constexpr int kRadioSampleRate = 16000;
 
-constexpr int32_t kPanelSize = 720;
+constexpr int32_t kPanelW = DISPLAY_WIDTH;
+constexpr int32_t kPanelH = DISPLAY_HEIGHT;
 constexpr uint32_t kColorBg = 0x0E1116;
 constexpr uint32_t kColorBgGrad = 0x161A22;
 constexpr uint32_t kColorTextPrimary = 0xFFFFFF;
@@ -65,10 +67,10 @@ constexpr uint32_t kColorListBorder = 0x2E3542;
 constexpr int32_t kTitleY = 48;
 constexpr int32_t kStatusY = 100;
 constexpr int32_t kVizY = 150;
-constexpr int32_t kVizW = 520;
-constexpr int32_t kVizH = 280;
+constexpr int32_t kVizW = (kPanelW - 32 < 520) ? kPanelW - 32 : 520;
+constexpr int32_t kVizH = (kPanelH >= 760) ? 280 : kPanelH / 3;
 constexpr int32_t kCtrlRowY = 530;
-constexpr int32_t kCtrlRowWidth = 520;
+constexpr int32_t kCtrlRowWidth = (kPanelW - 32 < 520) ? kPanelW - 32 : 520;
 constexpr int32_t kCtrlRowHeight = 120;
 constexpr int32_t kCtrlSideBtnSize = 80;
 constexpr int32_t kCtrlPlayBtnSize = 112;
@@ -1490,7 +1492,7 @@ void BuildTitle(lv_obj_t* scr) {
     lv_obj_set_style_text_align(s_ui.lbl_title, LV_TEXT_ALIGN_CENTER,
                                 LV_PART_MAIN);
     lv_label_set_long_mode(s_ui.lbl_title, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_ui.lbl_title, kPanelSize - 220);
+    lv_obj_set_width(s_ui.lbl_title, kPanelW - 160);
     lv_obj_align(s_ui.lbl_title, LV_ALIGN_TOP_MID, 0, kTitleY);
     // 点标题也可打开台表
     lv_obj_add_flag(s_ui.lbl_title, LV_OBJ_FLAG_CLICKABLE);
@@ -1506,14 +1508,14 @@ void BuildTitle(lv_obj_t* scr) {
                                 LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.lbl_status, LV_TEXT_ALIGN_CENTER,
                                 LV_PART_MAIN);
-    lv_obj_set_width(s_ui.lbl_status, kPanelSize - 80);
+    lv_obj_set_width(s_ui.lbl_status, kPanelW - 32);
     lv_obj_align(s_ui.lbl_status, LV_ALIGN_TOP_MID, 0, kStatusY);
     screen_make_input_passive(s_ui.lbl_status);
 }
 
 void BuildStationListOverlay(lv_obj_t* scr) {
     s_ui.list_overlay = lv_obj_create(scr);
-    lv_obj_set_size(s_ui.list_overlay, kPanelSize, kPanelSize);
+    lv_obj_set_size(s_ui.list_overlay, kPanelW, kPanelH);
     lv_obj_align(s_ui.list_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
     screen_strip_obj_chrome(s_ui.list_overlay);
     lv_obj_remove_flag(s_ui.list_overlay, LV_OBJ_FLAG_SCROLLABLE);
@@ -1528,7 +1530,7 @@ void BuildStationListOverlay(lv_obj_t* scr) {
     screen_swipe_back_ignore(s_ui.list_overlay, true);
 
     lv_obj_t* header = lv_obj_create(s_ui.list_overlay);
-    lv_obj_set_size(header, kPanelSize, 88);
+    lv_obj_set_size(header, kPanelW, 88);
     lv_obj_align(header, LV_ALIGN_TOP_LEFT, 0, 0);
     screen_strip_obj_chrome(header);
     lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -1564,7 +1566,7 @@ void BuildStationListOverlay(lv_obj_t* scr) {
     screen_make_input_passive(title);
 
     s_ui.list_scroll = lv_obj_create(s_ui.list_overlay);
-    lv_obj_set_size(s_ui.list_scroll, kPanelSize - 48, kPanelSize - 108);
+    lv_obj_set_size(s_ui.list_scroll, kPanelW - 32, kPanelH - 108);
     lv_obj_align(s_ui.list_scroll, LV_ALIGN_TOP_MID, 0, 96);
     screen_strip_obj_chrome(s_ui.list_scroll);
     lv_obj_add_flag(s_ui.list_scroll, LV_OBJ_FLAG_SCROLLABLE);
@@ -1580,7 +1582,7 @@ void BuildStationListOverlay(lv_obj_t* scr) {
 
     for (size_t i = 0; i < kRadioStationCount; ++i) {
         lv_obj_t* row = lv_obj_create(s_ui.list_scroll);
-        lv_obj_set_size(row, kPanelSize - 64, 64);
+        lv_obj_set_size(row, kPanelW - 48, 64);
         screen_strip_obj_chrome(row);
         lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
@@ -1601,7 +1603,7 @@ void BuildStationListOverlay(lv_obj_t* scr) {
         lv_obj_t* name = lv_label_create(row);
         lv_label_set_text(name, kRadioStations[i].name);
         lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(name, kPanelSize - 120);
+        lv_obj_set_width(name, kPanelW - 96);
         lv_obj_set_style_text_font(name, &font_puhui_20_4, LV_PART_MAIN);
         lv_obj_set_style_text_color(name, lv_color_hex(kColorTextPrimary),
                                     LV_PART_MAIN);
@@ -1662,7 +1664,7 @@ void BuildVolumeLabel(lv_obj_t* scr) {
                                 LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.lbl_volume, LV_TEXT_ALIGN_CENTER,
                                 LV_PART_MAIN);
-    lv_obj_set_width(s_ui.lbl_volume, kPanelSize - 80);
+    lv_obj_set_width(s_ui.lbl_volume, kPanelW - 32);
     lv_obj_align(s_ui.lbl_volume, LV_ALIGN_TOP_MID, 0, kVizY + kVizH + 24);
     screen_make_input_passive(s_ui.lbl_volume);
 }
@@ -1700,7 +1702,7 @@ void BuildUsageHint(lv_obj_t* scr) {
     lv_obj_set_style_text_color(hint, lv_color_hex(kColorSubtle), LV_PART_MAIN);
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint, kPanelSize - 64);
+    lv_obj_set_width(hint, kPanelW - 32);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -kHintBottomMargin);
     screen_make_input_passive(hint);
 }
@@ -1716,6 +1718,7 @@ lv_obj_t* RadioScreen::Create() {
     s_ui = RadioUi{};
 
     lv_obj_t* scr = lv_obj_create(nullptr);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     screen_strip_obj_chrome(scr);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
@@ -1734,6 +1737,7 @@ lv_obj_t* RadioScreen::Create() {
 
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
 
     s_bound_scr = scr;

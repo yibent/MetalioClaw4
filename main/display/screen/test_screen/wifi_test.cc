@@ -15,7 +15,7 @@
 #include "freertos/task.h"
 #include "screen_util.h"
 #include "test_ui_common.h"
-#include "wifi_station.h"
+#include "wifi_manager.h"
 
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_30_4);
@@ -104,7 +104,7 @@ bool WifiInitForTest() {
     s_wifi_station_was_active =
         (mode_err == ESP_OK && mode_before != WIFI_MODE_NULL);
     if (s_wifi_station_was_active) {
-        WifiStation::GetInstance().Stop();
+        WifiManager::GetInstance().StopStation();
     }
 
     if (s_evt_group == nullptr) {
@@ -187,7 +187,7 @@ void WifiTeardownForTest() {
     s_wifi_initialized = false;
 
     if (s_wifi_station_was_active) {
-        WifiStation::GetInstance().Start();
+        WifiManager::GetInstance().StartStation();
     }
     s_wifi_station_was_active = false;
     ESP_LOGI(TAG, "wifi stack torn down");
@@ -481,7 +481,9 @@ void OpenListPopup() {
 
     lv_obj_t* card = lv_obj_create(mask);
     screen_strip_obj_chrome(card);
-    lv_obj_set_size(card, 640, 560);
+    const int card_w = std::min(640, kTestPanelW - 32);
+    const int card_h = std::min(560, kTestPanelH - 64);
+    lv_obj_set_size(card, card_w, card_h);
     lv_obj_center(card);
     lv_obj_set_style_bg_color(card, lv_color_hex(kColorPopupBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);

@@ -2,6 +2,7 @@
 #include "i18n.h"
 
 #include "home_screen/home_screen.h"
+#include "config.h"
 #include "screen_util.h"
 
 #include <algorithm>
@@ -14,11 +15,11 @@ LV_FONT_DECLARE(font_puhui_30_4);
 namespace {
 
 // ---------------------------------------------------------------------------
-// 720x720 layout (square panel; ported from a 640x480 horizontal source).
+// Native-width calendar layout (ported from a 640x480 horizontal source).
 //
-//   panel ........ 720
+//   panel ........ native display width
 //   card margin .. 28 (left/right), 28 (top), 24 (bottom)
-//                  -> content area = 664 wide x 668 tall
+//                  -> content area uses the active display width and height
 //
 //   header_top ......... 22  (relative to content top)
 //   header_row_height .. 84
@@ -31,7 +32,8 @@ namespace {
 //   grid total = 6*72 + 5*4 = 452
 //   grid bottom = 22 + 84 + 16 + 18 + 36 + 12 + 452 = 640 (within 668)
 // ---------------------------------------------------------------------------
-constexpr int32_t kScreenWidth      = 720;
+constexpr int32_t kScreenWidth      = DISPLAY_WIDTH;
+constexpr int32_t kScreenHeight     = DISPLAY_HEIGHT;
 
 constexpr int32_t kCardMarginX      = 28;
 constexpr int32_t kCardMarginTop    = 28;
@@ -322,6 +324,7 @@ void BuildCalendarGrid(lv_obj_t* content, int year, int month, int today_mday,
 
 lv_obj_t* CalendarScreen::Create() {
     lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_size(scr, kScreenWidth, kScreenHeight);
     screen_strip_obj_chrome(scr);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -371,6 +374,7 @@ lv_obj_t* CalendarScreen::Create() {
     // Make the entire content tree input-passive so PRESSED/RELEASED events
     // bubble up to the screen-level swipe-back handler.
     screen_make_input_passive(content);
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
 
     return scr;

@@ -3,6 +3,7 @@
 
 #include "IOExpander.hpp"
 #include "SimpleUart.hpp"
+#include "config.h"
 #include "screen_util.h"
 
 #include <cstdio>
@@ -19,6 +20,8 @@ LV_FONT_DECLARE(font_puhui_20_4);
 namespace {
 
 constexpr const char* TAG = "BtScreen";
+constexpr int kPanelW = DISPLAY_WIDTH;
+constexpr int kPanelSidePad = (kPanelW >= 660) ? 12 : 8;
 
 constexpr int kAddrHexLen = 12;
 
@@ -612,7 +615,7 @@ void BluetoothScreen::BuildInto(lv_obj_t* parent) {
     s_devices.clear();
     s_ui.root = parent;
 
-    lv_obj_set_style_pad_all(parent, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(parent, kPanelSidePad, LV_PART_MAIN);
     lv_obj_set_style_pad_row(parent, 10, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(parent, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_flex_flow(parent, LV_FLEX_FLOW_COLUMN);
@@ -714,7 +717,10 @@ void BluetoothScreen::BuildInto(lv_obj_t* parent) {
 
     lv_obj_t* scan = lv_button_create(panel);
     s_ui.scan_btn = scan;
-    lv_obj_set_size(scan, 180, 48);
+    lv_obj_set_size(scan, (kPanelW - 2 * kPanelSidePad < 180)
+                              ? kPanelW - 2 * kPanelSidePad
+                              : 180,
+                    48);
     lv_obj_align(scan, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(scan, 16, LV_PART_MAIN);
     lv_obj_set_style_bg_color(scan, lv_color_hex(kColorBtnActive),

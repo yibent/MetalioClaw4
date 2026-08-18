@@ -88,8 +88,8 @@ void TestUiShowConfirmDialog(const char* message, TestUiConfirmResultCb cb,
     s_confirm_cb = cb;
     s_confirm_user_data = user_data;
 
-    constexpr int32_t kCardW = 520;
-    constexpr int32_t kCardH = 280;
+    const int32_t kCardW = (kTestPanelW - 32 < 520) ? kTestPanelW - 32 : 520;
+    const int32_t kCardH = (kTestPanelH - 64 < 280) ? kTestPanelH - 64 : 280;
 
     lv_obj_t* mask = lv_obj_create(s_test_screen);
     s_confirm_mask = mask;
@@ -145,7 +145,10 @@ lv_obj_t* TestUiCreateRowShell(lv_obj_t* parent, const char* title,
                                lv_obj_t** out_status_icon,
                                lv_obj_t** out_right_ctrl) {
     constexpr int kRowInnerPad = 16;
-    constexpr int kLabelW      = 180;
+    // Leave enough room for the largest right-side control (the audio
+    // record button) on the 480px-wide panel while retaining the wider
+    // label column on the square panel.
+    const int kLabelW = (kTestPanelW < 600) ? 120 : 180;
     constexpr int kStatusIconSz = 36;
 
     lv_obj_t* row = lv_obj_create(parent);

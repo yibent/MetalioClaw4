@@ -7,6 +7,7 @@
 #include <esp_log.h>
 
 #include "board.h"
+#include "config.h"
 #include "home_screen/home_screen.h"
 #include "idle_power_policy.h"
 #include "pwr_key_handler.h"
@@ -14,14 +15,16 @@
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_30_4);
 LV_FONT_DECLARE(font_puhui_number_120_4);
+LV_FONT_DECLARE(font_puhui_number_50_4);
 
 namespace {
 
 constexpr const char* TAG = "StandbyScreen";
-constexpr int kPanelSize = 720;
+constexpr int kPanelW = DISPLAY_WIDTH;
+constexpr int kPanelH = DISPLAY_HEIGHT;
 
-constexpr int kChargeFxW = 560;
-constexpr int kChargeFxH = 360;
+constexpr int kChargeFxW = (DISPLAY_WIDTH < 600) ? DISPLAY_WIDTH : 560;
+constexpr int kChargeFxH = (DISPLAY_HEIGHT < 700) ? DISPLAY_HEIGHT / 2 : 360;
 constexpr int kParticleCount = 52;
 constexpr uint32_t kChargeBlueSoft = 0x59B2FF;
 constexpr uint32_t kChargeBlueBright = 0x9AD0FF;
@@ -30,11 +33,11 @@ constexpr uint32_t kParticleTickMs = 33;
 
 // 翻页时钟：HH MM SS 三组，组内个十位紧挨，组间留空。
 constexpr int kDigitCount = 6;
-constexpr int kDigitW = 88;
-constexpr int kDigitH = 148;
+constexpr int kDigitW = (DISPLAY_WIDTH < 600) ? 56 : 88;
+constexpr int kDigitH = (DISPLAY_WIDTH < 600) ? 84 : 148;
 constexpr int kDigitHalf = kDigitH / 2;
-constexpr int kPairGap = 6;    // 十位与个位间距
-constexpr int kGroupGap = 32;  // 时/分/秒组间距
+constexpr int kPairGap = (DISPLAY_WIDTH < 600) ? 4 : 6;    // 十位与个位间距
+constexpr int kGroupGap = (DISPLAY_WIDTH < 600) ? 14 : 32;  // 时/分/秒组间距
 constexpr uint32_t kCardBg = 0x1C1C1E;
 constexpr uint32_t kCardBgTop = 0x2A2A2E;
 constexpr uint32_t kHingeColor = 0x0A0A0A;
@@ -301,10 +304,15 @@ lv_obj_t* CreateHalfClip(lv_obj_t* parent, int y, uint32_t bg) {
     return clip;
 }
 
+const lv_font_t* StandbyDigitFont() {
+    return (DISPLAY_WIDTH < 600) ? &font_puhui_number_50_4
+                                 : &font_puhui_number_120_4;
+}
+
 lv_obj_t* CreateDigitLabel(lv_obj_t* parent, int32_t y) {
     lv_obj_t* lbl = lv_label_create(parent);
     lv_label_set_text(lbl, "0");
-    lv_obj_set_style_text_font(lbl, &font_puhui_number_120_4, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, StandbyDigitFont(), LV_PART_MAIN);
     lv_obj_set_style_text_color(lbl, lv_color_hex(kDigitColor), LV_PART_MAIN);
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_width(lbl, kDigitW);
@@ -314,7 +322,7 @@ lv_obj_t* CreateDigitLabel(lv_obj_t* parent, int32_t y) {
 }
 
 void CreateFlipDigit(lv_obj_t* parent, FlipDigit* d) {
-    const int32_t line_h = font_puhui_number_120_4.line_height;
+    const int32_t line_h = StandbyDigitFont()->line_height;
     d->label_ofs_y = (kDigitH - line_h) / 2;
 
     d->card = lv_obj_create(parent);
@@ -641,7 +649,7 @@ void standby_lifecycle_cb(screen_lifecycle_event_t event) {
 
 lv_obj_t* StandbyScreen::Create() {
     lv_obj_t* screen = lv_obj_create(NULL);
-    lv_obj_set_size(screen, kPanelSize, kPanelSize);
+    lv_obj_set_size(screen, kPanelW, kPanelH);
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_pad_all(screen, 0, LV_PART_MAIN);
@@ -654,7 +662,6 @@ lv_obj_t* StandbyScreen::Create() {
     lv_obj_t* box = lv_obj_create(screen);
     lv_obj_remove_style_all(box);
     lv_obj_set_size(box, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_center(box);
     lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_pad_row(box, 28, LV_PART_MAIN);
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
@@ -677,6 +684,14 @@ lv_obj_t* StandbyScreen::Create() {
     UpdateClockLabels();
     s_ui.update_timer = lv_timer_create(OnClockTimer, 1000, nullptr);
 
+    // The box uses LV_SIZE_CONTENT and its final height depends on both the
+    // clock row and the date label.  Resolve that size before centering it;
+    // centering the empty container earlier leaves a stale vertical offset
+    // after the flex layout grows.
+    lv_obj_update_layout(box);
+    lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
+
+    screen_mark_native_layout(screen);
     lv_obj_add_event_cb(screen, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);
     return screen;

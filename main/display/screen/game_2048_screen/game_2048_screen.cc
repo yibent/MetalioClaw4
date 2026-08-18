@@ -2,6 +2,8 @@
 #include "i18n.h"
 
 #include "home_screen/home_screen.h"
+#include "config.h"
+#include "screen_util.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -12,14 +14,14 @@
 
 LV_FONT_DECLARE(font_puhui_20_4);
 
-/* 720x720 layout (tuned for puhui 20px font) */
-#define SCR_W           720
-#define SCR_H           720
+/* Native panel layout (tuned for puhui 20px font). */
+#define SCR_W           DISPLAY_WIDTH
+#define SCR_H           DISPLAY_HEIGHT
 #define MARGIN_X        20
 #define HEADER_Y        20
 #define HEADER_H        80
 #define BOARD_GAP_Y     10
-#define BOARD_SIZE      552
+#define BOARD_SIZE      ((SCR_W - 2 * MARGIN_X < 552) ? (SCR_W - 2 * MARGIN_X) : 552)
 #define BOARD_X         ((SCR_W - BOARD_SIZE) / 2)
 #define BOARD_Y         (HEADER_Y + HEADER_H + BOARD_GAP_Y)
 #define FOOTER_H        25
@@ -519,6 +521,7 @@ void build_overlay(lv_obj_t* parent) {
 
 lv_obj_t* Game2048::Create() {
     lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_size(scr, SCR_W, SCR_H);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0xfaf8ef), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
@@ -533,5 +536,6 @@ lv_obj_t* Game2048::Create() {
 
     srand((unsigned)lv_tick_get());
     game_reset();
+    screen_mark_native_layout(scr);
     return scr;
 }

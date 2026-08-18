@@ -1,11 +1,10 @@
 #include "app_usb.h"
+#include "board_hardware.h"
 #include "esp_lcd_touch.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "usb_descriptors.h"
-
-extern esp_lcd_touch_handle_t metalio_claw_4_get_touch(void);
 
 static const char* TAG = "app_touch";
 static esp_lcd_touch_handle_t s_tp = NULL;
@@ -60,7 +59,7 @@ static void app_touch_task(void* arg) {
 }
 
 esp_err_t app_touch_init(void) {
-    s_tp = metalio_claw_4_get_touch();
+    s_tp = board_get_touch();
     if (s_tp == NULL) {
         ESP_LOGW(TAG, "touch handle null, HID touch disabled");
         return ESP_OK;

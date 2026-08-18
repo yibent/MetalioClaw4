@@ -97,6 +97,7 @@ lv_obj_t* AutoTestScreen::Create() {
     s_screen = scr;
     TestUiSetScreen(scr);
     screen_strip_obj_chrome(scr);
+    screen_mark_native_layout(scr);
     lv_obj_set_size(scr, kTestPanelW, kTestPanelH);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kTestColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);

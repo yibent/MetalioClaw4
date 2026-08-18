@@ -2,6 +2,7 @@
 #include "i18n.h"
 
 #include "Weather.hpp"
+#include "config.h"
 #include "home_screen/home_screen.h"
 #include "screen_util.h"
 #include "settings.h"
@@ -25,7 +26,8 @@ LV_FONT_DECLARE(font_puhui_30_4);
 
 namespace {
 
-constexpr int32_t kPanelW = 720;
+constexpr int32_t kPanelW = DISPLAY_WIDTH;
+constexpr int32_t kPanelH = DISPLAY_HEIGHT;
 constexpr int32_t kHeaderH  = 88;
 constexpr int32_t kBackBtnSize = 72;
 constexpr int32_t kHeaderSidePad = 16;
@@ -33,7 +35,7 @@ constexpr int32_t kRegionBtnW = 72;
 constexpr int32_t kRefreshBtnW = 72;
 constexpr int32_t kHeaderBtnH = 56;
 constexpr int32_t kHeaderBtnGap = 8;
-constexpr int32_t kModalCardW = 560;
+constexpr int32_t kModalCardW = (kPanelW - 32 < 560) ? kPanelW - 32 : 560;
 constexpr int32_t kModalCardPad = 24;
 constexpr int32_t kModalDdW = kModalCardW - kModalCardPad * 2;
 constexpr int32_t kModalDdH = 44;
@@ -325,7 +327,7 @@ void OpenCityPickerDialog() {
     s_city_dlg_mask = mask;
     screen_strip_obj_chrome(mask);
     lv_obj_add_flag(mask, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(mask, kPanelW, kPanelW);
+    lv_obj_set_size(mask, kPanelW, kPanelH);
     lv_obj_set_pos(mask, 0, 0);
     lv_obj_set_style_bg_color(mask, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(mask, LV_OPA_70, LV_PART_MAIN);
@@ -973,7 +975,7 @@ void OnRefreshClicked(lv_event_t* /*e*/) { TriggerFetch(); }
 void OnBackClicked(lv_event_t* /*e*/) { OnSwipeBack(); }
 
 void BuildTabView(lv_obj_t* scr) {
-    const int32_t body_h = kPanelW - kHeaderH;
+    const int32_t body_h = kPanelH - kHeaderH;
 
     lv_obj_t* tv = lv_tabview_create(scr);
     s_tabview = tv;
@@ -1039,7 +1041,7 @@ lv_obj_t* WeatherScreen::Create() {
     lv_obj_t* scr = lv_obj_create(nullptr);
     s_screen = scr;
     screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelW, kPanelW);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_grad_color(scr, lv_color_hex(kColorBgGrad), LV_PART_MAIN);
@@ -1120,6 +1122,7 @@ lv_obj_t* WeatherScreen::Create() {
     TriggerFetch();
 
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, OnSwipeBack);
     return scr;
 }

@@ -11,6 +11,7 @@
 #include "lv_eaf.h"
 
 #include "application.h"
+#include "config.h"
 #include "device_state.h"
 #include "SdCardManager.hpp"
 #include "home_screen/home_screen.h"
@@ -33,8 +34,8 @@ constexpr const char* TAG = "ChatScreen";
 //   │  表情模式：EAF 全屏居中 + 底部字幕叠加       │
 //   └───────────────────────────────────────────┘ 720
 // ---------------------------------------------------------------------------
-constexpr int32_t kPanelW          = 720;
-constexpr int32_t kPanelH          = 720;
+constexpr int32_t kPanelW          = DISPLAY_WIDTH;
+constexpr int32_t kPanelH          = DISPLAY_HEIGHT;
 constexpr int32_t kHeaderH         = 88;
 constexpr int32_t kBackBtnSize     = 72;
 constexpr int32_t kListPadH        = 18;
@@ -1179,6 +1180,7 @@ lv_obj_t* ChatScreen::Create() {
     s_ui.activation_guard_timer =
         lv_timer_create(on_activation_guard_timer, 1000, nullptr);
 
+    screen_mark_native_layout(scr);
     screen_attach_swipe_back(scr, on_swipe_back);
     lv_obj_add_event_cb(scr, on_screen_unloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);

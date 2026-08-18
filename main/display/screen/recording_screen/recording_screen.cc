@@ -26,6 +26,7 @@
 #include "audio_codec.h"
 #include "audio_service.h"
 #include "board.h"
+#include "config.h"
 #include "home_screen/home_screen.h"
 #include "protocol.h"
 #include "SdCardManager.hpp"
@@ -44,11 +45,14 @@ namespace {
 
 constexpr const char* TAG = "RecordingScreen";
 
-constexpr int32_t kPanelSize = 720;
+constexpr int32_t kPanelW = DISPLAY_WIDTH;
+constexpr int32_t kPanelH = DISPLAY_HEIGHT;
 constexpr int32_t kHeaderH = 90;
 constexpr int32_t kBackBtnSize = 72;
 constexpr int32_t kTabBarH = 64;
-constexpr int32_t kBodyH = kPanelSize - kHeaderH;
+constexpr int32_t kBodyH = kPanelH - kHeaderH;
+constexpr int32_t kSidePad = (kPanelW >= 680) ? 40 : 24;
+constexpr int32_t kContentW = kPanelW - 2 * kSidePad;
 
 constexpr uint32_t kColorBg = 0x0E1116;
 constexpr uint32_t kColorTabBar = 0x12151C;
@@ -1966,7 +1970,7 @@ void BuildDetailPanel(lv_obj_t* parent) {
     lv_obj_t* panel = lv_obj_create(parent);
     s_ui.detail_panel = panel;
     screen_strip_obj_chrome(panel);
-    lv_obj_set_size(panel, kPanelSize, kPanelSize);
+    lv_obj_set_size(panel, kPanelW, kPanelH);
     lv_obj_set_pos(panel, 0, 0);
     lv_obj_set_style_bg_color(panel, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, LV_PART_MAIN);
@@ -1976,7 +1980,7 @@ void BuildDetailPanel(lv_obj_t* parent) {
 
     lv_obj_t* header = lv_obj_create(panel);
     screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelSize, kHeaderH);
+    lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -2001,7 +2005,7 @@ void BuildDetailPanel(lv_obj_t* parent) {
     s_ui.detail_title = lv_label_create(header);
     lv_label_set_text(s_ui.detail_title, "");
     lv_label_set_long_mode(s_ui.detail_title, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_ui.detail_title, kPanelSize - 16 - kBackBtnSize - 40);
+    lv_obj_set_width(s_ui.detail_title, kPanelW - 16 - kBackBtnSize - 40);
     lv_obj_set_style_text_color(s_ui.detail_title, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ui.detail_title, &font_puhui_30_4, LV_PART_MAIN);
     lv_obj_align(s_ui.detail_title, LV_ALIGN_LEFT_MID, 16 + kBackBtnSize + 8, 0);
@@ -2016,8 +2020,12 @@ void BuildDetailPanel(lv_obj_t* parent) {
     lv_obj_t* play = lv_button_create(panel);
     s_ui.detail_play_btn = play;
     lv_obj_remove_style_all(play);
-    lv_obj_set_size(play, 300, 72);
-    lv_obj_align(play, LV_ALIGN_TOP_LEFT, 40, kHeaderH + 48);
+    constexpr int32_t kDetailBtnGap = 16;
+    constexpr int32_t kDetailBtnW = ((kPanelW - 2 * kSidePad - kDetailBtnGap) / 2 < 300)
+                                        ? (kPanelW - 2 * kSidePad - kDetailBtnGap) / 2
+                                        : 300;
+    lv_obj_set_size(play, kDetailBtnW, 72);
+    lv_obj_align(play, LV_ALIGN_TOP_LEFT, kSidePad, kHeaderH + 48);
     lv_obj_set_style_radius(play, 20, LV_PART_MAIN);
     lv_obj_set_style_bg_color(play, lv_color_hex(kColorAccent), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(play, LV_OPA_COVER, LV_PART_MAIN);
@@ -2035,8 +2043,8 @@ void BuildDetailPanel(lv_obj_t* parent) {
     lv_obj_t* asr = lv_button_create(panel);
     s_ui.detail_asr_btn = asr;
     lv_obj_remove_style_all(asr);
-    lv_obj_set_size(asr, 300, 72);
-    lv_obj_align(asr, LV_ALIGN_TOP_RIGHT, -40, kHeaderH + 48);
+    lv_obj_set_size(asr, kDetailBtnW, 72);
+    lv_obj_align(asr, LV_ALIGN_TOP_RIGHT, -kSidePad, kHeaderH + 48);
     lv_obj_set_style_radius(asr, 20, LV_PART_MAIN);
     lv_obj_set_style_bg_color(asr, lv_color_hex(0x059669), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(asr, LV_OPA_COVER, LV_PART_MAIN);
@@ -2053,7 +2061,7 @@ void BuildDetailPanel(lv_obj_t* parent) {
 
     s_ui.detail_status = lv_label_create(panel);
     lv_label_set_text(s_ui.detail_status, "");
-    lv_obj_set_width(s_ui.detail_status, kPanelSize - 80);
+    lv_obj_set_width(s_ui.detail_status, kPanelW - 2 * kSidePad);
     lv_label_set_long_mode(s_ui.detail_status, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(s_ui.detail_status, lv_color_hex(kColorSubtle),
                                 LV_PART_MAIN);
@@ -2063,7 +2071,8 @@ void BuildDetailPanel(lv_obj_t* parent) {
 
     lv_obj_t* result_box = lv_obj_create(panel);
     screen_strip_obj_chrome(result_box);
-    lv_obj_set_size(result_box, kPanelSize - 48, kPanelSize - (kHeaderH + 180));
+    lv_obj_set_size(result_box, kPanelW - 2 * kSidePad,
+                    kPanelH - (kHeaderH + 180));
     lv_obj_align(result_box, LV_ALIGN_TOP_MID, 0, kHeaderH + 168);
     lv_obj_set_style_bg_color(result_box, lv_color_hex(kColorCard), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(result_box, LV_OPA_COVER, LV_PART_MAIN);
@@ -2074,7 +2083,7 @@ void BuildDetailPanel(lv_obj_t* parent) {
 
     s_ui.detail_result = lv_label_create(result_box);
     lv_label_set_text(s_ui.detail_result, "");
-    lv_obj_set_width(s_ui.detail_result, kPanelSize - 48 - 40);
+    lv_obj_set_width(s_ui.detail_result, kPanelW - 2 * kSidePad - 40);
     lv_label_set_long_mode(s_ui.detail_result, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(s_ui.detail_result, lv_color_hex(kColorText),
                                 LV_PART_MAIN);
@@ -2084,7 +2093,7 @@ void BuildDetailPanel(lv_obj_t* parent) {
 void BuildHeader(lv_obj_t* parent) {
     lv_obj_t* header = lv_obj_create(parent);
     screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelSize, kHeaderH);
+    lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -2116,7 +2125,7 @@ void BuildHeader(lv_obj_t* parent) {
 void BuildNoSdHint(lv_obj_t* parent) {
     lv_obj_t* hint = lv_label_create(parent);
     lv_label_set_text(hint, I18n::T("未检测到 SD 卡\n\n请插入 SD 卡后再使用录音功能"));
-    lv_obj_set_width(hint, kPanelSize - 80);
+    lv_obj_set_width(hint, kPanelW - 2 * kSidePad);
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(hint, lv_color_hex(kColorSubtle), LV_PART_MAIN);
@@ -2132,7 +2141,7 @@ void BuildRecordTab(lv_obj_t* tab) {
 
     lv_obj_t* card = lv_obj_create(tab);
     screen_strip_obj_chrome(card);
-    lv_obj_set_size(card, 640, 220);
+    lv_obj_set_size(card, (kContentW < 640) ? kContentW : 640, 220);
     lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 40);
     lv_obj_set_style_bg_color(card, lv_color_hex(kColorCard), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
@@ -2152,13 +2161,16 @@ void BuildRecordTab(lv_obj_t* tab) {
     lv_obj_set_style_text_color(s_ui.status_lbl, lv_color_hex(kColorSubtle), LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ui.status_lbl, &font_puhui_20_4, LV_PART_MAIN);
     lv_label_set_long_mode(s_ui.status_lbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_ui.status_lbl, 560);
+    lv_obj_set_width(s_ui.status_lbl, (kContentW < 560) ? kContentW - 32 : 560);
     lv_obj_set_style_text_align(s_ui.status_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align(s_ui.status_lbl, LV_ALIGN_BOTTOM_MID, 0, -24);
 
     s_ui.record_btn = lv_button_create(tab);
     lv_obj_remove_style_all(s_ui.record_btn);
-    lv_obj_set_size(s_ui.record_btn, 360, 88);
+    lv_obj_set_size(s_ui.record_btn, (kPanelW - 2 * kSidePad < 360)
+                                      ? kPanelW - 2 * kSidePad
+                                      : 360,
+                    88);
     lv_obj_align(s_ui.record_btn, LV_ALIGN_TOP_MID, 0, 320);
     lv_obj_set_style_radius(s_ui.record_btn, 44, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_ui.record_btn, lv_color_hex(kColorRecord), LV_PART_MAIN);
@@ -2184,6 +2196,8 @@ void BuildRecordTab(lv_obj_t* tab) {
     }
     lv_obj_set_style_text_color(tip, lv_color_hex(kColorSubtle), LV_PART_MAIN);
     lv_obj_set_style_text_font(tip, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_set_width(tip, kContentW);
+    lv_label_set_long_mode(tip, LV_LABEL_LONG_WRAP);
     lv_obj_align(tip, LV_ALIGN_TOP_MID, 0, 440);
     screen_make_input_passive(tip);
 }
@@ -2195,7 +2209,7 @@ void BuildListTab(lv_obj_t* tab) {
 
     s_ui.list_status = lv_label_create(tab);
     lv_label_set_text(s_ui.list_status, "");
-    lv_obj_set_width(s_ui.list_status, kPanelSize - 48);
+    lv_obj_set_width(s_ui.list_status, kPanelW - 2 * kSidePad);
     lv_label_set_long_mode(s_ui.list_status, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_align(s_ui.list_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.list_status, lv_color_hex(kColorSubtle), LV_PART_MAIN);
@@ -2212,7 +2226,8 @@ void BuildListTab(lv_obj_t* tab) {
 
     s_ui.list_scroll = lv_obj_create(tab);
     screen_strip_obj_chrome(s_ui.list_scroll);
-    lv_obj_set_size(s_ui.list_scroll, kPanelSize - 40, kBodyH - kTabBarH - 56);
+    lv_obj_set_size(s_ui.list_scroll, kPanelW - 2 * kSidePad,
+                    kBodyH - kTabBarH - 56);
     lv_obj_align(s_ui.list_scroll, LV_ALIGN_TOP_MID, 0, 12);
     lv_obj_set_style_bg_opa(s_ui.list_scroll, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_flex_flow(s_ui.list_scroll, LV_FLEX_FLOW_COLUMN);
@@ -2226,7 +2241,7 @@ void BuildListTab(lv_obj_t* tab) {
 void BuildTabView(lv_obj_t* parent) {
     lv_obj_t* tv = lv_tabview_create(parent);
     s_ui.tabview = tv;
-    lv_obj_set_size(tv, kPanelSize, kBodyH);
+    lv_obj_set_size(tv, kPanelW, kBodyH);
     lv_obj_set_pos(tv, 0, kHeaderH);
     lv_tabview_set_tab_bar_position(tv, LV_DIR_TOP);
     lv_tabview_set_tab_bar_size(tv, kTabBarH);
@@ -2299,7 +2314,7 @@ lv_obj_t* RecordingScreen::Create() {
     lv_obj_t* scr = lv_obj_create(nullptr);
     s_ui.screen = scr;
     screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelSize, kPanelSize);
+    lv_obj_set_size(scr, kPanelW, kPanelH);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -2315,8 +2330,9 @@ lv_obj_t* RecordingScreen::Create() {
         RebuildFileList();
     }
 
-    screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
+    screen_mark_native_layout(scr);
+    screen_attach_swipe_back(scr, OnSwipeBack);
     return scr;
 }
 
