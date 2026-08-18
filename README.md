@@ -32,7 +32,7 @@
 14. [Compilation and Flashing](#14-compilation-and-flashing)
 15. [Debugging and Common Issues](#15-debugging-and-common-issues)
 
-> Recent additions: **Digital Human settings (EAF/SJPG)**, **Translate**, **AI Image Gen**, **chat interrupt menu**, **session-scoped wake-word**, **default OTA URL → NVS**, **runtime UI i18n**, **standby screen**, **ESPClaw dual-boot**, **SD virtual USB**, **internet radio**, **recording (Opus + ASR)**, and related sections below.
+> Recent additions: **Translate**, **AI Image Gen**, **chat interrupt menu**, **session-scoped wake-word**, **default OTA URL → NVS**, **runtime UI i18n**, **standby screen**, and **SD virtual USB**.
 
 ---
 
@@ -71,9 +71,6 @@ API details and device‑side capabilities are described in [§10 OpenClaw](#10-
 ### 2.3 Multimodal Perception
 
 - **Photo Preview**: OV2710 MIPI‑CSI camera, **2 MP** (1920×1080), real‑time preview and capture in the **Camera** app  
-- **Outdoor Positioning & Navigation**: The **Location** app provides GPS, Wi‑Fi, and base‑station tabs; the latter two are obtained via the 4G module, suitable for environments without GPS signal or indoors  
-- **Magnetic Field Observation**: The **Magnet** app shows real‑time three‑axis magnetometer data for field visualization and simple detection  
-- **Level Measurement**: The **Spirit Level** app uses the accelerometer to detect tilt angle, aiding placement and calibration  
 
 ### 2.4 Connectivity
 
@@ -86,25 +83,12 @@ API details and device‑side capabilities are described in [§10 OpenClaw](#10-
 
 Metalio Claw4 **ships with an embedded 4G SIM‑patch** (internal SIM). The NT26 module also provides an **external SIM slot**; users may install their own SIM card. In **4G network mode**, the **Network Configuration** app’s **SIM Switch** page lets you toggle between internal and external cards; the status bar shows whether the current SIM is “Internal Card” or “External Card” .
 
-| SIM Type                                 | Description                                      | Can Call? |
-|:---------------------------------------- |:------------------------------------------------ |:---------:|
-| **Internal Card** (patch SIM, SimSlot=1) | Pre‑installed at factory, mainly for **4G data** | ❌ No      |
-| **External Card** (SimSlot=0)            | User‑inserted standard SIM card                  | ✅ Yes     |
+| SIM Type                                 | Description                                      |
+|:---------------------------------------- |:------------------------------------------------ |
+| **Internal Card** (patch SIM, SimSlot=1) | Pre‑installed at factory, mainly for **4G data** |
+| **External Card** (SimSlot=0)            | User‑inserted standard SIM card                  |
 
-- **Phone Calls**: Only the **external SIM** can dial via the **Phone** app; using the internal SIM prompts a switch to external SIM  
 - **4G Data**: Both internal and external SIMs can be used for cellular data (after switching to 4G mode in **Network Configuration**)
-
-##### 4G‑Assisted Positioning (Location App)
-
-Besides GPS satellite positioning, the NT26 module supports cellular‑network assisted positioning. In the **Location** app this appears as independent tabs:
-
-| Tab                       | Method                      | Description                       |
-|:------------------------- |:--------------------------- |:--------------------------------- |
-| **GPS Position**          | On‑board GPS module         | NMEA satellite positioning        |
-| **Wi‑Fi Position**        | 4G module Wi‑Fi scan        | `AT+ECWIFISCAN`, requires 4G mode |
-| **Base‑Station Position** | 4G module base‑station info | `AT+ECBCINFO`, requires 4G mode   |
-
-Wi‑Fi / base‑station positioning needs the device to be in **4G network mode** with the module successfully registered; results can be viewed as coordinates and opened as a static map inside the app.
 
 ##### Professional Bluetooth Audio Solution
 
@@ -164,18 +148,18 @@ On detecting NU1680 online (I2C 0x60), firmware defaults to writing `0x00` to 
 
 ## 3. Application Scenarios
 
-Metalio Claw4 ships with 20+ built‑in apps. Developers can **mix, trim, or secondary‑develop** based on existing hardware/software to turn apps into vertical solutions. The table below lists **example scenarios** (not a fixed factory configuration).
+Metalio Claw4 ships with a focused set of built‑in apps. Developers can **mix, trim, or secondary‑develop** based on existing hardware/software to turn apps into vertical solutions. The table below lists **example scenarios** (not a fixed factory configuration).
 
 | Scenario (example)                                                               | Related Apps / Capabilities                                |
 |:-------------------------------------------------------------------------------- |:---------------------------------------------------------- |
-| **Photo Learning**                                                               | Camera, Digital Human, SD‑Card Resource Management         |
-| **Conference Recording**                                                         | Chat, Recording (Opus + cloud ASR), OpenClaw, Bluetooth Audio, Phone |
+| **Photo Learning**                                                               | Camera, SD‑Card Resource Management                         |
+| **Conference Recording**                                                         | Chat, OpenClaw, Bluetooth Audio                            |
 | **Live Interpretation**                                                          | Translate (Sonicloud realtime ASR / translation)           |
 | **Creative Image Gen**                                                           | AI Image Gen (voice → text‑to‑image)                       |
 | **Smart Controller**                                                             | Voice dialogue + MCP protocol to control IoT devices       |
-| **Outdoor Navigation**                                                           | GPS positioning (GPS / Wi‑Fi / Base‑Station tabs), 4G data |
-| **Entertainment**                                                                | Music (Bluetooth speaker), Radio (HLS), Game, Theme Switching |
-| **Development Debug**                                                            | Pin test, System Info, Magnet / Level apps                 |
+| **Outdoor Navigation**                                                           | GPS hardware service, 4G data                              |
+| **Entertainment**                                                                | Bluetooth speaker mode, Game                              |
+| **Development Debug**                                                            | Pin test, System Info, factory hardware tests              |
 
 ---
 
@@ -184,7 +168,7 @@ Metalio Claw4 ships with 20+ built‑in apps. Developers can **mix, trim, or sec
 ```mermaid
 flowchart TB
     ui["User Interaction Layer<br/>720x720 LVGL 9 Touch UI · Voice Wake-up · Power Key PWR_KEY"]
-    apps["Application Layer<br/>Chat · Digital Human · Translate · AI Image Gen · Radio · Recording · OpenClaw · Camera · GPS · ..."]
+    apps["Application Layer<br/>Chat · Translate · AI Image Gen · OpenClaw · Camera · ..."]
     svc["Service Layer<br/>AudioService · GpsService · SdCardManager · MCP Server"]
     proto["Protocol Layer<br/>WebSocket · MQTT+UDP · OpenClaw HTTP API"]
     board["Board Abstraction<br/>DualNetworkBoard · Display · AudioCodec · Backlight · Gauge"]
@@ -436,7 +420,7 @@ stateDiagram-v2
     activating --> idle
 ```
 
-- **idle** – standby; wake‑word engine is held **only while Chat / Digital Human (voice UI) is foreground** (`SetVoiceUiDesired`), released on home to cut idle CPU  
+- **idle** – standby; wake‑word engine is held **only while Chat is foreground** (`SetVoiceUiDesired`), released on home to cut idle CPU  
 - **listening** – recording, streaming ASR upstream  
 - **speaking** – playing TTS response  
 - **connecting** – establishing WebSocket / MQTT link  
@@ -475,8 +459,6 @@ main/
 ├── protocols/                  # WebSocket / MQTT
 └── boards/common/              # Common drivers (GPS, SD, fuel gauge, usb_virtual_disk, …)
 
-esp_claw_bin/                   # ESPClaw (ota_1) companion images & flash notes
-partitions/v1/32m_dual.csv      # 32 MB dual-system table (ota_0=main FW, ota_1=ESPClaw)
 ```
 
 ---
@@ -500,20 +482,6 @@ The device‑side **OpenClaw App** (`openclaw_screen`) provides:
 - Message‑bubble chat UI  
 - Multi‑turn dialogue with the cloud Agent  
 
-### 10.1 ESPClaw (Local Dual‑Boot)
-
-Unlike cloud **OpenClaw**, the home‑screen **ESPClaw** entry boots the local edge_agent flashed in **`ota_1`** (emote / system / storage partitions are also required):
-
-| Slot | Partition table | Contents |
-|:---|:---|:---|
-| `ota_0` (~9 M @ `0x200000`) | `partitions/v1/32m_dual.csv` | This repo’s main firmware (xingzhi / MetalioClaw4) |
-| `ota_1` (~4 M) | same | ESPClaw `edge_agent` |
-| `emote` / `system` / `storage` | same | ESPClaw emote assets & FAT storage |
-
-- Tap home **ESPClaw** → after confirm, switch boot partition to `ota_1` and reboot  
-- If ESPClaw images were never flashed, the UI reports ESPClaw not found  
-- **Flash guide & full image list**: [`esp_claw_bin/README.md`](esp_claw_bin/README.md); partition‑table offset must be `CONFIG_PARTITION_TABLE_OFFSET=0x9000`
-
 ---
 
 ## 11. Built‑in Applications
@@ -524,30 +492,19 @@ Home‑screen app list (`home_screen.cc` → `kApps[]`):
 |:-------------- |:---------------- |:------------------------------------------------------------------------ |
 | Chat           | `chat`           | XiaoZhi voice chat; **text** / **EAF emotion**; interrupt menu (§11.1)   |
 | Network Config | `wifi`           | Wi‑Fi / 4G switch, SIM swap (internal / external)                        |
-| Digital Human  | `digital_people` | SD emotions (SJPG / EAF); long‑press settings (§11.4)                    |
-| Phone          | `call`           | 4G calls (**external SIM only**)                                         |
-| Music          | `music`          | Bluetooth speaker mode (BT mode 3), phone‑push lyric display             |
 | Calendar       | `calendar`       | Calendar view                                                            |
 | OpenClaw       | `openclaw`       | Cloud Agent dialogue (§10)                                               |
-| ESPClaw        | `espclaw`        | Switch to `ota_1` local edge_agent (§10.1)                               |
 | Camera         | `camera`         | OV2710 preview & capture (1920×1080)                                     |
-| Location       | `gps`            | GPS / Wi‑Fi / Base‑station positioning (latter two need 4G mode)         |
-| Spirit Level   | `spirit_level`   | Tilt angle                                                               |
-| Magnet         | `magnet`         | QMC6309 three‑axis visualization                                         |
-| Vibrate        | `vibrate`        | Vibration motor test (GPIO 22)                                           |
 | Calculator     | `calculator`     | Four‑function arithmetic                                                 |
 | Weather        | `weather`        | City weather query                                                       |
 | SD Card        | `sd`             | Browse / delete files; **Enable virtual USB** (§14.6)                    |
 | Pin Test       | `pin`            | GPIO test                                                                |
 | 2048           | `2048`           | Small game                                                               |
 | System Info    | `info`           | Firmware version / chip / MAC                                            |
-| Theme          | `theme`          | Four icon‑theme packs                                                    |
 | Test           | `test`           | Factory entry: auto test, stress test, hardware tests, etc.              |
 | Settings       | `settings`       | Volume / brightness / standby / **language** / Bluetooth / charge (if IC) |
-| Radio          | `radio`          | Internet HLS radio + spectrum visualizer (§11.2)                         |
-| Recording      | `recording`      | SD Opus record / list playback / cloud ASR (§11.3)                       |
-| AI Image Gen   | `ai_image_gen`   | Voice prompt → text‑to‑image; multi‑image tabs (§11.6)                   |
-| Translate      | `translate`      | Sonicloud realtime interpretation (§11.5)                                |
+| AI Image Gen   | `ai_image_gen`   | Voice prompt → text‑to‑image; multi‑image tabs (§11.3)                   |
+| Translate      | `translate`      | Sonicloud realtime interpretation (§11.2)                                |
 
 #### Settings
 
@@ -567,37 +524,15 @@ Factory / stress entry (`test_screen`): auto tests (fuel gauge / wireless charge
 - **Chat mode**: left/right text bubbles (assistant/system left, user right); black background  
 - **Emotion mode**: full‑screen centered EAF at `/sdcard/system/chat/{emotion}.eaf` (server name; `[A-Za-z0-9_-]`); white caption at bottom; tap header area to show/hide chrome  
 - **Interrupt preference**: NVS‑persisted, default off; enables device AEC for barge‑in while processing  
-- **Voice session**: wake‑word engine is held only while Chat / Digital Human is foreground (`SetVoiceUiDesired`); leaving home soft‑stops then delayed‑destroys AFE  
+- **Voice session**: wake‑word engine is held only while Chat is foreground (`SetVoiceUiDesired`); leaving home soft‑stops then delayed‑destroys AFE  
 - Requires SD assets for emotion mode  
 
-#### 11.2 Radio (`radio`)
-
-- Network **HLS (m3u8)** live streams; built‑in station table (`radio_stations.h`)  
-- Spectrum visualization while playing; entering the page pauses the system voice path and restores wake‑word on exit  
-- **Prefer Wi‑Fi**; 4G uses a lot of data (UI shows a warning)
-
-#### 11.3 Recording (`recording`)
-
-- **Requires SD card**: if unmounted, only a hint is shown  
-- **Record** tab: start / stop with timer; saves **Ogg Opus** to `/sdcard/recordings/REC_*.opus`; ~**30 min** max per clip  
-- **List** tab: lists `.opus` (legacy `.wav` still supported); tap opens a **detail** page (does not play immediately)  
-- **Detail**: play / stop; **Transcribe** async‑uploads to `POST /api/v1/asr/transcribe` (`X-Device-Id`), then polls when opening detail  
-- API base paths live in `main/api_endpoints.h` (`kAsrTranscribe`)
-
-#### 11.4 Digital Human (`digital_people`)
-
-- Full‑screen emotions under `/sdcard/system/emotion/`; categories: `crying` / `happy` / `loving` / `neutral` / `surprised` / `thinking`  
-- **Long‑press ~5 s** opens settings (top‑left back only; no swipe‑back)  
-- Format options: **SJPG** (`{category}.sjpg`, default) or **EAF** (`{category}.eaf`) with frame delay **10–500 ms** (default 30) via `lv_eaf_set_frame_delay`  
-- NVS: `ui/dp_fmt`, `ui/dp_delay_ms`; returning rebuilds the screen  
-- Activation gate when device not activated; when ready, same voice‑UI / wake‑word session as Chat  
-
-#### 11.5 Translate (`translate`)
+#### 11.2 Translate (`translate`)
 
 - Sonicloud **realtime interpretation**: hold‑to‑talk for source text + translation  
 - Requires **Wi‑Fi** (blocked with hint if offline); source and target languages must differ  
 
-#### 11.6 AI Image Gen (`ai_image_gen`)
+#### 11.3 AI Image Gen (`ai_image_gen`)
 
 - Voice description → cloud **text‑to‑image**; elapsed time while generating; multi‑image tabs afterward  
 - Download to local storage; requires **Wi‑Fi**  
@@ -623,19 +558,19 @@ ESP32‑P4 talks to the Bluetooth codec via **UART** (115200, GPIO 26/27) usin
 Think of the Bluetooth chip’s three modes as three tasks: **(1) everyday XiaoZhi chat**, **(2) talk via Bluetooth ear‑/speaker**, **(3) use phone as remote to play music**. Most switches are handled automatically by firmware.
 
 **Mode 1 – Daily XiaoZhi Chat (boot default)**  
-Device powers up in mode 1, the default for normal voice interaction. The Bluetooth codec routes I2S for XiaoZhi’s mic & speaker; you just wake‑word → chat. Exiting the **Music** app automatically returns to mode 1.
+Device powers up in mode 1, the default for normal voice interaction. The Bluetooth codec routes I2S for XiaoZhi’s mic & speaker; you just wake‑word → chat. Switching back from Bluetooth mode 3 in **Settings → Bluetooth** returns to normal voice interaction.
 
 **Mode 2 – External Bluetooth Device for XiaoZhi Chat**  
 To chat via a Bluetooth headset or speaker (must have a mic), open **Settings → Bluetooth**, select **Mode 2**, scan, pair. Audio routes to the paired device. Return to mode 1 by manually switching back on the same tab.
 
 **Mode 3 – Phone → Device as Bluetooth Speaker**  
-Open the **Music** app → firmware auto‑switches to mode 3 (speaker‑waiting). Connect phone via Bluetooth, play music from any app; song info and (if supported) lyrics appear on screen. Leaving the Music app restores mode 1 automatically.
+Open **Settings → Bluetooth** and select **Mode 3** (speaker‑waiting). Connect the phone via Bluetooth and play music from any app. Return to **Mode 1** on the same tab when finished.
 
 | Mode       | One‑line Summary                            | How to Enter                        | How to Exit                            |
 |:----------:|:------------------------------------------- |:----------------------------------- |:-------------------------------------- |
-| **Mode 1** | Normal XiaoZhi talk; default on boot        | Boot auto; exit Music → auto‑return | Usually stay in default                |
+| **Mode 1** | Normal XiaoZhi talk; default on boot        | Boot auto; select on Bluetooth tab   | Usually stay in default                |
 | **Mode 2** | Use Bluetooth ear‑/speaker for XiaoZhi talk | **Settings → Bluetooth** → Mode 2   | Manual switch back to Mode 1           |
-| **Mode 3** | Phone uses device as Bluetooth speaker      | Open Music app (auto‑switch)        | Exit Music app (auto‑return to Mode 1) |
+| **Mode 3** | Phone uses device as Bluetooth speaker      | **Settings → Bluetooth** → Mode 3   | Manual switch back to Mode 1           |
 
 #### Mode‑Switch AT Commands
 
@@ -835,15 +770,13 @@ The Bluetooth audio codec has its own USB‑UART (CH340K). Flashing must use tha
 
 ### 14.6 SD‑Card Resources & Virtual USB Drive
 
-Assets for features like the Digital Human are in the [`sd_images/`](sd_images/) folder. Copy the contents to the root of a FAT‑formatted SD card, preserving the directory structure. Details are in [sd_images/README.md](sd_images/README.md).
+Chat emotion assets are in the [`sd_images/`](sd_images/) folder. Copy the contents to the root of a FAT‑formatted SD card, preserving the directory structure. Details are in [sd_images/README.md](sd_images/README.md).
 
 Common paths:
 
 | Path | Purpose |
 |:---|:---|
-| `/sdcard/system/emotion/` | Digital‑human emotions: `{category}.sjpg` or `.eaf` (settings) |
 | `/sdcard/system/chat/` | Chat emotion‑mode `.eaf` (`{emotion}.eaf`) |
-| `/sdcard/recordings/` | Recording app Opus files (and legacy WAV) |
 
 #### Virtual USB Drive (USB MSC)
 
@@ -855,16 +788,6 @@ The device can expose microSD as **USB Mass Storage** to a PC (`usb_virtual_disk
 4. **Eject / safely remove** on the PC, then tap **Disable virtual USB**; or leave the SD Card page (auto force‑disable and best‑effort restore of serial).
 
 > If disable fails, eject the drive on the PC first to avoid filesystem corruption.
-
-### 14.7 ESPClaw Dual‑System Flashing
-
-Before using home **ESPClaw**, Flash must follow `partitions/v1/32m_dual.csv` and include edge_agent / emote / system / storage images from `esp_claw_bin/`.
-
-**Recommended:** flash the main firmware and ESPClaw‑related bins in **one full pass**. Naming convention and `esptool` examples:
-
-- [`esp_claw_bin/README.md`](esp_claw_bin/README.md)
-
-Partition‑table offset must be **`0x9000`** (same as edge_agent).
 
 ---
 
@@ -880,9 +803,6 @@ Partition‑table offset must be **`0x9000`** (same as edge_agent).
 | `CameraScreen`   | Camera preview                    |
 | `OpenClawScreen` | OpenClaw dialogue                 |
 | `ChatScreen`     | Chat / emotion mode               |
-| `DigitalPeopleScreen` | Digital human / settings     |
-| `RadioScreen`    | Internet radio                    |
-| `RecordingScreen`| Recording / ASR transcription     |
 | `TranslateScreen`| Live interpretation               |
 | `AiImageGenScreen` | AI image generation             |
 | `System Monitor` | CPU / RAM / battery periodic logs |
@@ -909,12 +829,6 @@ A: Metalio Claw4 gets Wi‑Fi via ESP‑Hosted SDIO to the ESP32‑C5 coprocesso
 
 **Q: 4G fails to register**  
 A: 1. Ensure you switched to **4G mode** in the **Network Configuration** app. 2. Confirm the internal 4G patch SIM or external SIM is active and not overdue. 3. For external SIM, check it is properly inserted. 4. Watch the NT26 module’s `AT+CEREG` status in the serial log.
-
-**Q: Phone app can’t dial**  
-A: The internal SIM supports data only. Insert an external SIM, switch to it in **Network Configuration**, then use the **Phone** app. See [§2.4 4G & SIM Card](#4g-and-sim-card).
-
-**Q: Wi‑Fi / base‑station positioning unavailable**  
-A: These require the device to be in **4G network mode** with the module successfully registered. Refer to [§2.4 4G‑Assisted Positioning](#4g-assisted-positioning-location-app).
 
 **Q: SD‑card mount fails**  
 A: 1. Check the SD card is FAT32 formatted. 2. Verify external power to the SD‑card slot: the IO extender pin `SD` (P0‑3) must be low to enable; firmware drives it low on boot. 3. Ensure the SDMMC PHY power domain is enabled (see `config.h` `SDMMC_LDO_CHAN_ID`, default LDO chan 4); `SdCardManager` requests it at mount time. 4. If the log shows `Failed to create SD power control driver`, the power domain isn’t ready. 5. Confirm SDMMC pins match `config.h`.

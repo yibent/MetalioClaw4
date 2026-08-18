@@ -1,8 +1,6 @@
 tmp/
 # 忽略 components 下内容（用 /* 而非 /，否则 ! 例外无法生效）
 components/*
-!components/usb_device_uac/
-!components/usb_device_uac/**
 managed_components/
 build/
 .vscode/
@@ -22,8 +20,6 @@ main/mmap_generate_emoji.h
 !/Metalio_Claw4_Latest.bin
 !wakeword/
 !wakeword/*.bin
-!esp_claw_bin/
-!esp_claw_bin/*.bin
 # 合成版本固件目录（不含 Latest）
 firmware/
 mmap_generate_*.h

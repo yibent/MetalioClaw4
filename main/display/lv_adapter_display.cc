@@ -1,7 +1,6 @@
 #include "lv_adapter_display.h"
 
 #include <cstring>
-#include <memory>
 
 #include <esp_lcd_panel_io.h>
 #include <esp_log.h>
@@ -15,71 +14,11 @@
 
 #include "screen/boot_screen/boot_screen.h"
 #include "screen/chat_screen/chat_screen.h"
-#include "screen/digital_people_screen/digital_people_screen.h"
 #include "screen/home_screen/home_screen.h"
 
 #include "application.h"
 
 static const char* TAG = "LVAdapterDisplay";
-
-namespace {
-
-// ---------------------------------------------------------------------------
-// 表情大类映射
-//
-// 服务器 / LLM 返回的细分表情多达 21 种，但端侧 SD 卡只准备了 6 个大类的
-// .eaf 动画（crying / happy / loving / neutral / surprised / thinking）。
-// 这里把细分名收敛到大类代表，再交给 DigitalPeopleScreen 拼路径加载。
-// 表中没收录的（或 nullptr）一律 fallback 到 neutral，保证永远有动画播放。
-// ---------------------------------------------------------------------------
-struct EmoteCategoryEntry {
-    const char* emote;     // 细分表情名
-    const char* category;  // 所属大类（代表表情名）
-};
-
-constexpr EmoteCategoryEntry kEmoteCategoryMap[] = {
-    // 开心类 -> happy
-    {"happy",       "happy"},
-    {"laughing",    "happy"},
-    {"funny",       "happy"},
-    {"silly",       "happy"},
-    {"winking",     "happy"},
-    {"cool",        "happy"},
-    {"confident",   "happy"},
-    // 爱意类 -> loving
-    {"loving",      "loving"},
-    {"kissy",       "loving"},
-    {"delicious",   "loving"},
-    // 悲伤 / 负面类 -> crying（6 大类里用 crying 这个名字而不是 sad）
-    {"sad",         "crying"},
-    {"crying",      "crying"},
-    {"angry",       "crying"},
-    // 惊讶类 -> surprised
-    {"surprised",   "surprised"},
-    {"shocked",     "surprised"},
-    {"embarrassed", "surprised"},
-    // 思考类 -> thinking
-    {"thinking",    "thinking"},
-    {"confused",    "thinking"},
-    // 平静类 -> neutral
-    {"neutral",     "neutral"},
-    {"relaxed",     "neutral"},
-    {"sleepy",      "neutral"},
-};
-
-// 输入任一细分表情名，返回所属大类代表名；找不到时返回 "neutral"。
-// 表大小固定 < 32，O(N) 线性比较完全够用。
-const char* GetEmoteCategory(const char* emote) {
-    if (emote == nullptr) return "neutral";
-    for (const auto& e : kEmoteCategoryMap) {
-        if (std::strcmp(e.emote, emote) == 0) {
-            return e.category;
-        }
-    }
-    return "neutral";
-}
-
-}  // namespace
 
 LVAdapterDisplay::LVAdapterDisplay(const esp_lcd_panel_handle_t panel,
                                    const esp_lcd_panel_io_handle_t panel_io,
@@ -186,20 +125,10 @@ void LVAdapterDisplay::SetupUI() {
 LVAdapterDisplay::~LVAdapterDisplay() = default;
 
 void LVAdapterDisplay::SetEmotion(const char* const emotion) {
-    // 1) 把细分表情名映射到 6 个大类之一（兜底 neutral）
-    const char* category = GetEmoteCategory(emotion);
-    ESP_LOGI(TAG, "SetEmotion: %s -> %s",
-             emotion != nullptr ? emotion : "<null>", category);
-
-    // 2) 转交：数字人屏用 6 大类；聊天屏表情模式用服务器原始情绪名
-    //    （对应 S:/sdcard/system/chat/{emotion}.eaf）。这把锁和
-    //    SetChatMessage 共用，确保 lv_eaf_set_src 与屏幕生命周期互斥。
-    //    屏幕不在前台时 SetEmotion 只更新静态缓存，下次 Create / 切到
-    //    表情模式再加载，故无需判断 IsActive()。
+    ESP_LOGI(TAG, "SetEmotion: %s", emotion != nullptr ? emotion : "<null>");
     if (esp_lv_adapter_lock(-1) != ESP_OK) {
         return;
     }
-    DigitalPeopleScreen::SetEmotion(category);
     ChatScreen::SetEmotion(emotion != nullptr ? emotion : "neutral");
     esp_lv_adapter_unlock();
 }
@@ -219,29 +148,17 @@ void LVAdapterDisplay::SetChatMessage(const char* const role, const char* const 
         return;
     }
 
-    // 路由策略：
-    //   1) 聊天屏在前台 -> 历史滚动气泡（双侧）。
-    //   2) 数字人屏在前台 -> user 走底部气泡，bot 走 gif 左上方气泡。
-    //   3) 其它屏 -> 直接丢弃，避免在后台无界堆积。
+    // 仅在聊天页前台时接收消息，其他页面直接丢弃，避免后台无界堆积。
     const bool chat_active = ChatScreen::IsActive();
-    const bool dp_active   = DigitalPeopleScreen::IsActive();
-    if (!chat_active && !dp_active) {
+    if (!chat_active) {
         return;
     }
 
     if (esp_lv_adapter_lock(-1) != ESP_OK) {
         return;
     }
-    if (chat_active) {
-        ChatScreen::AddMessage(content,
-                               is_user ? ChatMsgDir::Right : ChatMsgDir::Left);
-    } else {
-        if (is_user) {
-            DigitalPeopleScreen::ShowUserMessage(content);
-        } else {
-            DigitalPeopleScreen::ShowSystemMessage(content);
-        }
-    }
+    ChatScreen::AddMessage(content,
+                           is_user ? ChatMsgDir::Right : ChatMsgDir::Left);
     esp_lv_adapter_unlock();
 }
 

@@ -8,8 +8,6 @@
 #include <algorithm>
 #include <string>
 #include <esp_log.h>
-#include <esp_ota_ops.h>
-#include <esp_partition.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -26,33 +24,21 @@
 #include "settings_screen/settings_screen.h"
 #include "calculator_screen/calculator_screen.h"
 #include "calendar_screen/calendar_screen.h"
-#include "call_screen/call_screen.h"
 #include "camera_screen/camera_screen.h"
 #include "chat_screen/chat_screen.h"
-#include "digital_people_screen/digital_people_screen.h"
 #include "game_2048_screen/game_2048_screen.h"
-#include "gps_screen/gps_screen.h"
-#include "level_screen/level_screen.h"
-#include "magnet_screen/magnet_screen.h"
-#include "music_screen/music_screen.h"
-#include "radio_screen/radio_screen.h"
-#include "recording_screen/recording_screen.h"
 #include "openclaw_screen/openclaw_screen.h"
 #include "ai_image_gen_screen/ai_image_gen_screen.h"
 #include "translate_screen/translate_screen.h"
-#include "secondary_screen/secondary_screen.h"
 #include "pwr_key_handler.h"
 #include "screen_util.h"
 #include "idle_power_policy.h"
-#include "vibrate_screen/vibrate_screen.h"
 #include "weather_screen/weather_screen.h"
 #include "network_screen/network_screen.h"
 #include "pin_test_screen/pin_test_screen.h"
 #include "test_screen/test_screen.h"
 #include "sd_card_screen/sd_card_screen.h"
-#include "theme_screen/theme_screen.h"
 #include "info_screen/info_screen.h"
-#include "theme_manager.h"
 #include "wifi_required_dialog.h"
 
 LV_FONT_DECLARE(font_puhui_20_4);
@@ -98,17 +84,6 @@ void calculator_lifecycle_cb(screen_lifecycle_event_t event) {
     }
 }
 
-void call_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("call", event);
-    if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG_HOME, "load: call_screen");
-    } else {
-        ESP_LOGI(TAG_HOME, "unload: call_screen");
-    }
-    // 转发给 CallScreen 自己处理 PA_SWITCH 切换以及通话兜底挂断。
-    CallScreen::LifecycleCallback(event);
-}
-
 void calendar_lifecycle_cb(screen_lifecycle_event_t event) {
     PwrKey_OnScreenLifecycle("calendar", event);
     if (event == SCREEN_LIFECYCLE_LOAD) {
@@ -118,38 +93,6 @@ void calendar_lifecycle_cb(screen_lifecycle_event_t event) {
     }
 }
 
-// 音乐界面的生命周期回调：把 BT 切到模式3、注册 / 摘 UART 回调全部
-// 由 MusicScreen::LifecycleCallback 内部统一处理。
-void music_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("music", event);
-    if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG_HOME, "load: music_screen");
-    } else {
-        ESP_LOGI(TAG_HOME, "unload: music_screen");
-    }
-    MusicScreen::LifecycleCallback(event);
-}
-
-void radio_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("radio", event);
-    if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG_HOME, "load: radio_screen");
-    } else {
-        ESP_LOGI(TAG_HOME, "unload: radio_screen");
-    }
-    RadioScreen::LifecycleCallback(event);
-}
-
-void recording_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("recording", event);
-    if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG_HOME, "load: recording_screen");
-    } else {
-        ESP_LOGI(TAG_HOME, "unload: recording_screen");
-    }
-    RecordingScreen::LifecycleCallback(event);
-}
-
 void weather_lifecycle_cb(screen_lifecycle_event_t event) {
     PwrKey_OnScreenLifecycle("weather", event);
     if (event == SCREEN_LIFECYCLE_LOAD) {
@@ -157,18 +100,6 @@ void weather_lifecycle_cb(screen_lifecycle_event_t event) {
     } else {
         ESP_LOGI(TAG_HOME, "unload: weather_screen");
     }
-}
-
-// GPS 屏幕的 GPS_POWER 开关已经搬到 GpsScreen::LifecycleCallback；这里
-// 只保留日志 + 转发，与 camera / vibrate / bluetooth 等屏幕的写法对齐。
-void gps_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("gps", event);
-    if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG_HOME, "load: gps_screen");
-    } else {
-        ESP_LOGI(TAG_HOME, "unload: gps_screen");
-    }
-    GpsScreen::LifecycleCallback(event);
 }
 
 // 相机生命周期：直接转发到 CameraScreen::LifecycleCallback。
@@ -182,19 +113,6 @@ void camera_lifecycle_cb(screen_lifecycle_event_t event) {
         ESP_LOGI(TAG_HOME, "unload: camera_screen");
     }
     CameraScreen::LifecycleCallback(event);
-}
-
-// 震动生命周期：转发给 VibrateScreen::LifecycleCallback。
-// LOAD 时确保 LEDC 初始化、duty=0；UNLOAD 时停掉 pattern timer 并把 duty=0，
-// 保证用户离开屏幕马达不会还在响。
-void vibrate_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("vibrate", event);
-    if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG_HOME, "load: vibrate_screen");
-    } else {
-        ESP_LOGI(TAG_HOME, "unload: vibrate_screen");
-    }
-    VibrateScreen::LifecycleCallback(event);
 }
 
 // 网络配置：进入页面停掉 WifiStation 并自己接管 STA 栈用于扫描 / 连接，
@@ -212,11 +130,6 @@ void wifi_lifecycle_cb(screen_lifecycle_event_t event) {
 void chat_lifecycle_cb(screen_lifecycle_event_t event) {
     PwrKey_OnScreenLifecycle("chat", event);
     ChatScreen::LifecycleCallback(event);
-}
-
-void digital_people_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("digital_people", event);
-    DigitalPeopleScreen::LifecycleCallback(event);
 }
 
 // SD 卡生命周期：转发给 SdCardScreen::LifecycleCallback。
@@ -254,32 +167,6 @@ void test_lifecycle_cb(screen_lifecycle_event_t event) {
     TestScreen::LifecycleCallback(event);
 }
 
-// 水平仪生命周期：转发给 LevelScreen::LifecycleCallback。LOAD 时确保
-// SC7A20H 已经 probe + configure 过，UNLOAD 时让 LevelScreen 自己关掉
-// sample timer（OnScreenUnloaded 里实现）。
-void level_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("level", event);
-    if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG_HOME, "load: level_screen");
-    } else {
-        ESP_LOGI(TAG_HOME, "unload: level_screen");
-    }
-    LevelScreen::LifecycleCallback(event);
-}
-
-// 磁场生命周期：转发给 MagnetScreen::LifecycleCallback。LOAD 时把 QMC6309
-// 磁力计 probe + configure 一遍；UNLOAD 由 MagnetScreen 自身在
-// OnScreenUnloaded 里关掉采样 timer。
-void magnet_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("magnet", event);
-    if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG_HOME, "load: magnet_screen");
-    } else {
-        ESP_LOGI(TAG_HOME, "unload: magnet_screen");
-    }
-    MagnetScreen::LifecycleCallback(event);
-}
-
 // OpenClaw 生命周期：转发给 OpenClawScreen::LifecycleCallback，让屏幕
 // 自己负责录音 / 上传任务的兜底关闭与 wake word 恢复。
 void openclaw_lifecycle_cb(screen_lifecycle_event_t event) {
@@ -300,11 +187,6 @@ void translate_lifecycle_cb(screen_lifecycle_event_t event) {
         ESP_LOGI(TAG_HOME, "unload: translate_screen");
     }
     TranslateScreen::LifecycleCallback(event);
-}
-
-void secondary_screen_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("secondary_screen", event);
-    SecondaryScreen::LifecycleCallback(event);
 }
 
 constexpr int kAppsPerPage = 9;           // 3x3
@@ -422,9 +304,8 @@ constexpr uint32_t kDotColor = 0xFFFFFF;
 typedef void (*LaunchFn)(screen_lifecycle_cb_t lifecycle_cb);
 
 struct AppEntry {
-    // 图标资源后缀，例如 "chat"、"2048"。实际 LVGL 路径由 ThemeManager
-    // 的当前主题 id 拼出：A:ic_app_home_theme{N}_{suffix}.spng。
-    // 这样切换主题只需要重启后重新拼一次路径，不用改 AppEntry。
+    // 图标资源后缀，例如 "chat"、"2048"。实际 LVGL 路径固定为
+    // A:ic_app_home_theme1_{suffix}.spng。
     const char* icon_suffix;
     const char* name;                    // display name shown under the icon
     LaunchFn launch;                     // tapped -> launch this app (nullptr = no action)
@@ -453,49 +334,9 @@ void LaunchCalculator(screen_lifecycle_cb_t lifecycle_cb) {
     }
 }
 
-void LaunchCall(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = CallScreen::Create();
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
 void LaunchCalendar(screen_lifecycle_cb_t lifecycle_cb) {
     lv_obj_t* old_scr = lv_screen_active();
     lv_obj_t* app = CalendarScreen::Create();
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
-void LaunchMusic(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = MusicScreen::Create();
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
-void LaunchRadio(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = RadioScreen::Create();
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
-void LaunchRecording(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = RecordingScreen::Create();
     screen_attach_lifecycle(app, lifecycle_cb);
     lv_screen_load(app);
     if (old_scr != nullptr && old_scr != app) {
@@ -513,35 +354,11 @@ void LaunchWeather(screen_lifecycle_cb_t lifecycle_cb) {
     }
 }
 
-void LaunchGps(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = GpsScreen::Create();
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
 void LaunchCamera(screen_lifecycle_cb_t lifecycle_cb) {
     lv_obj_t* old_scr = lv_screen_active();
     lv_obj_t* app = CameraScreen::Create();
     if (app == nullptr) {
         ESP_LOGE(TAG_HOME, "CameraScreen::Create() failed");
-        return;
-    }
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
-void LaunchVibrate(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = VibrateScreen::Create();
-    if (app == nullptr) {
-        ESP_LOGE(TAG_HOME, "VibrateScreen::Create() failed");
         return;
     }
     screen_attach_lifecycle(app, lifecycle_cb);
@@ -564,36 +381,6 @@ void LaunchWifi(screen_lifecycle_cb_t lifecycle_cb) {
 void LaunchChat(screen_lifecycle_cb_t lifecycle_cb) {
     lv_obj_t* old_scr = lv_screen_active();
     lv_obj_t* app = ChatScreen::Create();
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
-void LaunchDigitalPeople(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = DigitalPeopleScreen::Create();
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
-void LaunchLevel(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = LevelScreen::Create();
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
-void LaunchMagnet(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = MagnetScreen::Create();
     screen_attach_lifecycle(app, lifecycle_cb);
     lv_screen_load(app);
     if (old_scr != nullptr && old_scr != app) {
@@ -656,164 +443,6 @@ void LaunchTranslate(screen_lifecycle_cb_t lifecycle_cb) {
     }
 }
 
-void LaunchSecondaryScreen(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = SecondaryScreen::Create();
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
-// ESPClaw：弹提示 → 将启动分区切到 ota_1 → 重启进入 edge_agent。
-bool s_espclaw_switching = false;
-lv_obj_t* s_espclaw_overlay = nullptr;
-lv_obj_t* s_espclaw_msg_lbl = nullptr;
-lv_timer_t* s_espclaw_fail_timer = nullptr;
-
-void StopHomeIdleTimer();  // defined later in this TU
-
-void CloseEspClawPopup() {
-    if (s_espclaw_fail_timer != nullptr) {
-        lv_timer_delete(s_espclaw_fail_timer);
-        s_espclaw_fail_timer = nullptr;
-    }
-    if (s_espclaw_overlay != nullptr) {
-        lv_obj_delete(s_espclaw_overlay);
-        s_espclaw_overlay = nullptr;
-    }
-    s_espclaw_msg_lbl = nullptr;
-    s_espclaw_switching = false;
-}
-
-void EspClawFailCloseTimer(lv_timer_t* /*timer*/) {
-    s_espclaw_fail_timer = nullptr;
-    CloseEspClawPopup();
-}
-
-void EspClawSwitchFailAsync(void* user_data) {
-    const char* msg = static_cast<const char*>(user_data);
-    if (s_espclaw_msg_lbl != nullptr && msg != nullptr) {
-        lv_label_set_text(s_espclaw_msg_lbl, msg);
-    }
-    s_espclaw_switching = false;
-    if (s_espclaw_fail_timer != nullptr) {
-        lv_timer_delete(s_espclaw_fail_timer);
-    }
-    // 展示错误约 2.5s 后自动收起，便于重试
-    s_espclaw_fail_timer =
-        lv_timer_create(EspClawFailCloseTimer, 2500, nullptr);
-    lv_timer_set_repeat_count(s_espclaw_fail_timer, 1);
-}
-
-void EspClawSwitchTask(void* /*arg*/) {
-    // 给弹窗一点渲染时间
-    vTaskDelay(pdMS_TO_TICKS(1500));
-
-    const esp_partition_t* ota1 = esp_partition_find_first(
-        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
-    if (ota1 == nullptr) {
-        ESP_LOGE(TAG_HOME, "ESPClaw: ota_1 partition not found");
-        lv_async_call(EspClawSwitchFailAsync,
-                      const_cast<char*>(I18n::T("未找到 ESPClaw\n请确认是否已安装到分区")));
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    esp_err_t err = esp_ota_set_boot_partition(ota1);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG_HOME, "ESPClaw: set boot to %s failed: %s", ota1->label,
-                 esp_err_to_name(err));
-        lv_async_call(EspClawSwitchFailAsync,
-                      const_cast<char*>(I18n::T("未找到 ESPClaw\n请确认是否已安装到分区")));
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    ESP_LOGW(TAG_HOME, "ESPClaw: boot -> %s, rebooting", ota1->label);
-    Application::GetInstance().Reboot();
-    vTaskDelete(nullptr);
-}
-
-void ShowEspClawSwitchPopup() {
-    lv_obj_t* scr = lv_screen_active();
-    if (scr == nullptr) {
-        return;
-    }
-    CloseEspClawPopup();
-    s_espclaw_switching = true;
-
-    const int kCardW = std::min(520, static_cast<int>(LV_HOR_RES) - 32);
-    const int kCardH = std::min(320, static_cast<int>(LV_VER_RES) - 64);
-
-    lv_obj_t* mask = lv_obj_create(scr);
-    lv_obj_remove_style_all(mask);
-    lv_obj_add_flag(mask, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(mask, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_pos(mask, 0, 0);
-    lv_obj_set_style_bg_color(mask, lv_color_hex(0x000000), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(mask, LV_OPA_80, LV_PART_MAIN);
-    lv_obj_remove_flag(mask, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(mask, LV_OBJ_FLAG_CLICKABLE);
-    screen_swipe_back_ignore(mask, true);
-    s_espclaw_overlay = mask;
-
-    lv_obj_t* card = lv_obj_create(mask);
-    lv_obj_remove_style_all(card);
-    lv_obj_set_size(card, kCardW, kCardH);
-    lv_obj_center(card);
-    lv_obj_set_style_bg_color(card, lv_color_hex(0x1B2030), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(card, 20, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(card, 24, LV_PART_MAIN);
-    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
-    screen_swipe_back_ignore(card, true);
-
-    lv_obj_t* head = lv_label_create(card);
-    lv_label_set_text(head, "ESPClaw");
-    lv_obj_set_style_text_color(head, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(head, &font_puhui_30_4, LV_PART_MAIN);
-    lv_obj_align(head, LV_ALIGN_TOP_MID, 0, 20);
-    lv_obj_remove_flag(head, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t* body = lv_label_create(card);
-    s_espclaw_msg_lbl = body;
-    lv_label_set_text(body, I18n::T("即将进入 ESPClaw..."));
-    lv_obj_set_width(body, kCardW - 48);
-    lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_color(body, lv_color_hex(0xE5E7EB), LV_PART_MAIN);
-    lv_obj_set_style_text_font(body, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(body, LV_ALIGN_CENTER, 0, 20);
-    lv_obj_remove_flag(body, LV_OBJ_FLAG_CLICKABLE);
-}
-
-void LaunchEspClaw(screen_lifecycle_cb_t /*lifecycle_cb*/) {
-    if (s_espclaw_switching) {
-        return;
-    }
-    StopHomeIdleTimer();
-    ShowEspClawSwitchPopup();
-    if (xTaskCreate(EspClawSwitchTask, "espclaw_sw", 4096, nullptr, 5,
-                    nullptr) != pdPASS) {
-        ESP_LOGE(TAG_HOME, "ESPClaw: failed to create switch task");
-        EspClawSwitchFailAsync(
-            const_cast<char*>(I18n::T("未找到 ESPClaw\n请确认是否已安装到分区")));
-    }
-}
-
-void LaunchTheme(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = ThemeScreen::Create();
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
 void LaunchSettings(screen_lifecycle_cb_t lifecycle_cb) {
     lv_obj_t* old_scr = lv_screen_active();
     lv_obj_t* app = SettingsScreen::Create();
@@ -832,16 +461,6 @@ void LaunchInfo(screen_lifecycle_cb_t lifecycle_cb) {
     if (old_scr != nullptr && old_scr != app) {
         lv_obj_delete_async(old_scr);
     }
-}
-
-void theme_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("theme", event);
-    if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG_HOME, "load: theme_screen");
-    } else {
-        ESP_LOGI(TAG_HOME, "unload: theme_screen");
-    }
-    ThemeScreen::LifecycleCallback(event);
 }
 
 void settings_lifecycle_cb(screen_lifecycle_event_t event) {
@@ -864,46 +483,30 @@ void info_lifecycle_cb(screen_lifecycle_event_t event) {
     InfoScreen::LifecycleCallback(event);
 }
 
-// 主屏 app 表。icon_suffix 对应 ic_app_home_theme{N}_{suffix}.spng 的
+// 主屏 app 表。icon_suffix 对应 ic_app_home_theme1_{suffix}.spng 的
 // 中间 suffix 部分；name 显示在图标正下方（传统手机桌面样式）。
-// 注意 "定位" 的 suffix 是 "gps"（资源命名），不是 "map"；"磁场" 暂无
-// 主题图标，资源 ic_app_home_themeN_magnet.spng 缺失时该格会显示为空。
 // name 存 zh-CN msgid（源文案）；显示时用 I18n::T(entry.name)。
 constexpr AppEntry kApps[] = {
     {"chat",           "聊天",     LaunchChat,          chat_lifecycle_cb,          true},
     {"wifi",           "网络配置", LaunchWifi,          wifi_lifecycle_cb,          false},
-    {"digital_people", "数字人",   LaunchDigitalPeople, digital_people_lifecycle_cb, true},
-    {"call",           "电话",     LaunchCall,          call_lifecycle_cb,          false},
-    {"music",          "音乐",     LaunchMusic,         music_lifecycle_cb,         false},
     {"calendar",       "日历",     LaunchCalendar,      calendar_lifecycle_cb,      false},
     {"openclaw",       "OpenClaw", LaunchOpenClaw,      openclaw_lifecycle_cb,      true},
-    {"espclaw",        "ESPClaw",  LaunchEspClaw,       nullptr,                    false},
     {"camera",         "相机",     LaunchCamera,        camera_lifecycle_cb,        false},
-    {"gps",            "定位",     LaunchGps,           gps_lifecycle_cb,           true},
-    {"spirit_level",   "水平仪",   LaunchLevel,         level_lifecycle_cb,         false},
-    {"magnet",         "磁场",     LaunchMagnet,        magnet_lifecycle_cb,        false},
-    {"vibrate",        "震动",     LaunchVibrate,       vibrate_lifecycle_cb,       false},
     {"calculator",     "计算器",   LaunchCalculator,    calculator_lifecycle_cb,    false},
     {"weather",        "天气",     LaunchWeather,       weather_lifecycle_cb,       true},
     {"sd",             "SD卡",     LaunchSdCard,        sd_card_lifecycle_cb,       false},
     {"pin",            "引脚测试", LaunchPinTest,       pin_test_lifecycle_cb,      false},
     {"2048",           "2048",     LaunchGame2048,      game_2048_lifecycle_cb,     false},
     {"info",           "系统信息", LaunchInfo,          info_lifecycle_cb,          false},
-    {"theme",          "主题",     LaunchTheme,         theme_lifecycle_cb,         false},
     {"test",           "测试",     LaunchTest,          test_lifecycle_cb,          false},
     {"settings",       "设置",     LaunchSettings,      settings_lifecycle_cb,      false},
-    {"radio",          "电台",     LaunchRadio,         radio_lifecycle_cb,         true},
-    // 录音本地可用；仅「录音转写」按钮需要联网（见 recording_screen）。
-    {"recording",      "录音",     LaunchRecording,     recording_lifecycle_cb,     false},
     {"ai_image_gen",   "AI生图",   LaunchAiImageGen,    ai_image_gen_lifecycle_cb,  true},
     {"translate",      "翻译",     LaunchTranslate,     translate_lifecycle_cb,     true},
-    {"secondary_screen", "副屏",   LaunchSecondaryScreen, secondary_screen_lifecycle_cb, false},
 };
 
 constexpr int kTotalApps = static_cast<int>(sizeof(kApps) / sizeof(kApps[0]));
 
-// 当前主题下，每个 app 解析出来的完整 LVGL 路径。在 HomeScreen::Create()
-// 入口处由 EnsureIconPathsBuilt() 填写；主题 id 变化时会自动重新拼接。
+// 每个 app 的完整 LVGL 路径。固件只保留第一套主题。
 //
 // 路径字符串必须在 lv_image 引用期间一直有效（lv_image_set_src 不复制内
 // 存），所以放在 namespace 静态而不是栈或函数局部。
@@ -911,21 +514,10 @@ constexpr int kIconPathBufSize = 56;
 char s_icon_paths[kTotalApps][kIconPathBufSize];
 
 void EnsureIconPathsBuilt() {
-    static bool built = false;
-    static int s_built_theme_id = 0;
-    const int tid = ThemeManager::GetCurrentThemeId();
-    // 第一次构建 / 主题 id 变更（理论上只在调试热改 NVS 时出现），都重新拼。
-    if (built && s_built_theme_id == tid) {
-        return;
-    }
     for (int i = 0; i < kTotalApps; ++i) {
         std::snprintf(s_icon_paths[i], kIconPathBufSize,
-                      "A:ic_app_home_theme%d_%s.spng",
-                      tid, kApps[i].icon_suffix);
+                      "A:ic_app_home_theme1_%s.spng", kApps[i].icon_suffix);
     }
-    s_built_theme_id = tid;
-    built = true;
-    ESP_LOGI(TAG_HOME, "icon paths built for theme%d", tid);
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,7 +601,7 @@ bool LaunchHomeApp(const AppEntry* app) {
     if (app == nullptr || app->launch == nullptr) {
         return false;
     }
-    // 仅对 requires_wifi 的应用做入口拦截；录音等本地可用的应用不在此拦。
+    // 仅对 requires_wifi 的应用做入口拦截。
     if (app->requires_wifi && WifiRequired_ShouldBlock()) {
         ESP_LOGW(TAG_HOME, "block app '%s': WiFi not connected",
                  app->icon_suffix != nullptr ? app->icon_suffix : "?");
@@ -1120,7 +712,7 @@ lv_obj_t* CreateAppCell(lv_obj_t* parent, const AppEntry& entry, int idx) {
                                        LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_transform_scale(cell, 262, LV_PART_MAIN | LV_STATE_PRESSED);
 
-    // 路径取自 s_icon_paths[idx]：已按当前主题前缀解析好（ic_app_home_themeN_xxx）。
+    // 路径取自 s_icon_paths[idx]：固定使用 theme1 前缀。
     lv_obj_t* icon = lv_image_create(cell);
     lv_image_set_src(icon, s_icon_paths[idx]);
     lv_obj_set_size(icon, Layout().icon_size, Layout().icon_size);
@@ -2326,7 +1918,7 @@ void ShowPowerDialog() {
 
     // ---- 全屏遮罩 ----
     // FLOATING：让 mask 脱离父屏的 flex / grid 布局。
-    // 比如 gps_screen 在根对象上挂了 LV_FLEX_FLOW_COLUMN，没有这个 flag
+    // 某些页面会在根对象上挂 LV_FLEX_FLOW_COLUMN，没有这个 flag
     // 时 mask 会被父屏的 flex 接管 —— `lv_obj_set_pos(0,0)` 会被布局覆盖
     // 重排到列尾，使用实际屏幕尺寸避免纵向屏幕只显示遮罩底部一截。挂了
     // FLOATING 后 mask 完全被父布局忽略，set_pos 重新生效，dialog 在任何
@@ -2470,8 +2062,7 @@ void HomeScreen::ShowPowerOptionsDialog() { ShowPowerDialog(); }
 lv_obj_t* HomeScreen::Create() {
     ConfigureHomeLayout();
 
-    // 主题相关：根据 NVS 里的当前主题 id 把 kApps 的 icon_suffix 拼成完整
-    // 路径，写入 s_icon_paths 缓存。后续 CreateAppCell 直接索引这份缓存。
+    // 固定使用保留的第一套主题资源。
     EnsureIconPathsBuilt();
 
     lv_obj_t* screen = lv_obj_create(NULL);
