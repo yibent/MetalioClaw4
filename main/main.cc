@@ -10,6 +10,7 @@
 #include "application.h"
 #include "i18n.h"
 #include "system_info.h"
+#include "lua_runtime.h"
 
 #define TAG "main"
 
@@ -29,6 +30,9 @@ extern "C" void app_main(void)
 
     // UI locale from NVS (must run before first screen create).
     I18n::Init();
+
+    // Shared by all applications; individual apps only submit Lua jobs.
+    ESP_ERROR_CHECK(lua_runtime_init());
 
     // Launch the application
     auto& app = Application::GetInstance();

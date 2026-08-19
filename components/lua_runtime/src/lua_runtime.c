@@ -1,0 +1,580 @@
+#include "lua_runtime.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#include "cJSON.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "lauxlib.h"
+#include "lua_runtime_internal.h"
+#include "lua_ui.h"
+#include "lualib.h"
+
+#define TAG "lua_runtime"
+#define LUA_RUNTIME_MAX_JOBS 8
+#define LUA_RUNTIME_MAX_MODULES 16
+#define LUA_RUNTIME_MAX_CODE (64 * 1024)
+#define LUA_RUNTIME_DEFAULT_STACK (12 * 1024)
+#define LUA_RUNTIME_DEFAULT_PRIORITY 4
+#define LUA_RUNTIME_OUTPUT_SIZE (4 * 1024)
+
+typedef struct {
+    bool used;
+    lua_runtime_job_id_t id;
+    lua_runtime_job_state_t state;
+    char *name;
+    char *code;
+    char *path;
+    char *args_json;
+    char *output;
+    size_t output_length;
+    bool output_truncated;
+    uint32_t timeout_ms;
+    volatile bool stop_requested;
+    TaskHandle_t task;
+} runtime_job_t;
+
+static SemaphoreHandle_t s_lock;
+static runtime_job_t s_jobs[LUA_RUNTIME_MAX_JOBS];
+typedef struct {
+    char name[32];
+    lua_CFunction open_fn;
+} runtime_module_t;
+
+static runtime_module_t s_modules[LUA_RUNTIME_MAX_MODULES];
+static size_t s_module_count;
+static lua_runtime_job_id_t s_next_id = 1;
+static lua_runtime_job_callback_t s_callback;
+static void *s_callback_ctx;
+static bool s_initialized;
+
+static void free_job(runtime_job_t *job) {
+    free(job->name);
+    free(job->code);
+    free(job->path);
+    free(job->args_json);
+    free(job->output);
+    memset(job, 0, sizeof(*job));
+}
+
+void lua_runtime_set_context(lua_State *state, lua_runtime_exec_context_t *context) {
+    *(lua_runtime_exec_context_t **)lua_getextraspace(state) = context;
+}
+
+lua_runtime_exec_context_t *lua_runtime_get_context(lua_State *state) {
+    return *(lua_runtime_exec_context_t **)lua_getextraspace(state);
+}
+
+void lua_runtime_append_output(lua_runtime_exec_context_t *context, const char *text,
+                               size_t length) {
+    if (!context || !context->output || context->output_size == 0 || !text) {
+        return;
+    }
+    size_t used = context->output_length < context->output_size ? context->output_length
+                                                                : context->output_size - 1;
+    size_t room = context->output_size - 1 - used;
+    size_t copy = length < room ? length : room;
+    if (copy) {
+        memcpy(context->output + context->output_length, text, copy);
+    }
+    context->output_length += copy;
+    context->output[context->output_length] = '\0';
+    if (copy != length) {
+        context->truncated = true;
+    }
+}
+
+int lua_runtime_check_abort(lua_State *state) {
+    lua_runtime_exec_context_t *context = lua_runtime_get_context(state);
+    if (!context) {
+        return 0;
+    }
+    if (context->stop_requested && *context->stop_requested) {
+        return luaL_error(state, "stopped");
+    }
+    if (context->deadline_us && esp_timer_get_time() >= context->deadline_us) {
+        return luaL_error(state, "timeout");
+    }
+    return 0;
+}
+
+static void lua_hook(lua_State *state, lua_Debug *debug) {
+    (void)debug;
+    lua_runtime_check_abort(state);
+}
+
+static int lua_print(lua_State *state) {
+    lua_runtime_exec_context_t *context = lua_runtime_get_context(state);
+    int count = lua_gettop(state);
+    for (int i = 1; i <= count; ++i) {
+        size_t length = 0;
+        const char *text = luaL_tolstring(state, i, &length);
+        if (i > 1)
+            lua_runtime_append_output(context, "\t", 1);
+        lua_runtime_append_output(context, text, length);
+        lua_pop(state, 1);
+    }
+    lua_runtime_append_output(context, "\n", 1);
+    return 0;
+}
+
+static int l_runtime_sleep(lua_State *state) {
+    lua_Integer requested_delay = luaL_checkinteger(state, 1);
+    if (requested_delay < 0 || requested_delay > UINT32_MAX) {
+        return luaL_argerror(state, 1, "delay must be between 0 and UINT32_MAX");
+    }
+    uint32_t remaining = (uint32_t)requested_delay;
+    while (remaining > 0) {
+        uint32_t slice = remaining > 50 ? 50 : remaining;
+        vTaskDelay(pdMS_TO_TICKS(slice));
+        remaining -= slice;
+        lua_runtime_check_abort(state);
+    }
+    return 0;
+}
+
+static int l_runtime_now_ms(lua_State *state) {
+    lua_pushinteger(state, (lua_Integer)(esp_timer_get_time() / 1000));
+    return 1;
+}
+
+static int l_runtime_sleep_until(lua_State *state) {
+    lua_Integer deadline_ms = luaL_checkinteger(state, 1);
+    while (true) {
+        int64_t remaining_ms = (int64_t)deadline_ms - esp_timer_get_time() / 1000;
+        if (remaining_ms <= 0)
+            return 0;
+        uint32_t slice = remaining_ms > 50 ? 50 : (uint32_t)remaining_ms;
+        vTaskDelay(pdMS_TO_TICKS(slice));
+        lua_runtime_check_abort(state);
+    }
+}
+
+static int l_runtime_cancelled(lua_State *state) {
+    lua_runtime_exec_context_t *context = lua_runtime_get_context(state);
+    lua_pushboolean(state, context && context->stop_requested && *context->stop_requested);
+    return 1;
+}
+
+static int luaopen_runtime(lua_State *state) {
+    static const luaL_Reg functions[] = {
+        {"sleep", l_runtime_sleep},
+        {"sleep_until", l_runtime_sleep_until},
+        {"now_ms", l_runtime_now_ms},
+        {"cancelled", l_runtime_cancelled},
+        {NULL, NULL},
+    };
+    luaL_newlib(state, functions);
+    return 1;
+}
+
+static void open_modules(lua_State *state) {
+    luaL_openlibs(state);
+    luaL_requiref(state, "ui", luaopen_ui, 1);
+    lua_pop(state, 1);
+    luaL_requiref(state, "runtime", luaopen_runtime, 1);
+    lua_pop(state, 1);
+    for (size_t i = 0; i < s_module_count; ++i) {
+        luaL_requiref(state, s_modules[i].name, s_modules[i].open_fn, 1);
+        lua_pop(state, 1);
+    }
+}
+
+static int l_open_modules(lua_State *state) {
+    open_modules(state);
+    return 0;
+}
+
+static esp_err_t push_json(lua_State *state, const cJSON *item, int depth) {
+    if (depth > 32)
+        return ESP_ERR_INVALID_SIZE;
+    if (!item || cJSON_IsNull(item))
+        lua_pushnil(state);
+    else if (cJSON_IsBool(item))
+        lua_pushboolean(state, cJSON_IsTrue(item));
+    else if (cJSON_IsNumber(item)) {
+        double value = item->valuedouble;
+        lua_Integer integer = (lua_Integer)value;
+        if ((double)integer == value)
+            lua_pushinteger(state, integer);
+        else
+            lua_pushnumber(state, value);
+    } else if (cJSON_IsString(item))
+        lua_pushstring(state, item->valuestring);
+    else if (cJSON_IsArray(item)) {
+        lua_newtable(state);
+        int index = 1;
+        const cJSON *child = NULL;
+        cJSON_ArrayForEach(child, item) {
+            esp_err_t err = push_json(state, child, depth + 1);
+            if (err != ESP_OK) {
+                lua_pop(state, 1);
+                return err;
+            }
+            lua_rawseti(state, -2, index++);
+        }
+    } else if (cJSON_IsObject(item)) {
+        lua_newtable(state);
+        const cJSON *child = NULL;
+        cJSON_ArrayForEach(child, item) {
+            esp_err_t err = push_json(state, child, depth + 1);
+            if (err != ESP_OK) {
+                lua_pop(state, 1);
+                return err;
+            }
+            lua_setfield(state, -2, child->string);
+        }
+    } else {
+        lua_pushnil(state);
+    }
+    return ESP_OK;
+}
+
+static esp_err_t set_args(lua_State *state, const char *json) {
+    if (!json || !json[0]) {
+        lua_newtable(state);
+        lua_setglobal(state, "args");
+        return ESP_OK;
+    }
+    cJSON *root = cJSON_Parse(json);
+    if (!root)
+        return ESP_ERR_INVALID_ARG;
+    esp_err_t err = push_json(state, root, 0);
+    cJSON_Delete(root);
+    if (err != ESP_OK)
+        return err;
+    lua_setglobal(state, "args");
+    return ESP_OK;
+}
+
+static esp_err_t execute_job(runtime_job_t *job) {
+    char *source = job->code;
+    size_t source_length = source ? strlen(source) : 0;
+    if (!source && job->path) {
+        struct stat st;
+        if (stat(job->path, &st) != 0)
+            return ESP_ERR_NOT_FOUND;
+        if (st.st_size <= 0 || st.st_size > LUA_RUNTIME_MAX_CODE)
+            return ESP_ERR_INVALID_SIZE;
+        FILE *file = fopen(job->path, "rb");
+        if (!file)
+            return ESP_ERR_NOT_FOUND;
+        source = malloc((size_t)st.st_size + 1);
+        if (!source) {
+            fclose(file);
+            return ESP_ERR_NO_MEM;
+        }
+        source_length = fread(source, 1, (size_t)st.st_size, file);
+        bool read_complete = source_length == (size_t)st.st_size && !ferror(file);
+        fclose(file);
+        if (!read_complete) {
+            free(source);
+            return ESP_FAIL;
+        }
+        source[source_length] = '\0';
+    }
+    if (!source || source_length == 0 || source_length > LUA_RUNTIME_MAX_CODE) {
+        if (source != job->code)
+            free(source);
+        return ESP_ERR_INVALID_SIZE;
+    }
+    lua_State *state = luaL_newstate();
+    if (!state) {
+        if (source != job->code)
+            free(source);
+        return ESP_ERR_NO_MEM;
+    }
+    lua_runtime_exec_context_t context = {
+        .output = job->output,
+        .output_size = LUA_RUNTIME_OUTPUT_SIZE,
+        .deadline_us = job->timeout_ms ? esp_timer_get_time() + (int64_t)job->timeout_ms * 1000 : 0,
+        .stop_requested = &job->stop_requested,
+    };
+    lua_runtime_set_context(state, &context);
+    lua_pushcfunction(state, l_open_modules);
+    int result = lua_pcall(state, 0, 0, 0);
+    if (result != LUA_OK) {
+        const char *message = lua_tostring(state, -1);
+        lua_runtime_append_output(&context, "ERROR: module initialization failed: ", 37);
+        lua_runtime_append_output(&context, message ? message : "unknown error",
+                                  message ? strlen(message) : 13);
+        lua_runtime_append_output(&context, "\n", 1);
+        job->output_length = context.output_length;
+        job->output_truncated = context.truncated;
+        lua_close(state);
+        if (source != job->code)
+            free(source);
+        return ESP_FAIL;
+    }
+    lua_pushlightuserdata(state, &context);
+    lua_pushcclosure(state, lua_print, 1);
+    lua_setglobal(state, "print");
+    esp_err_t args_result = set_args(state, job->args_json);
+    if (args_result != ESP_OK) {
+        lua_runtime_append_output(&context, "ERROR: invalid args_json\n", 25);
+        job->output_length = context.output_length;
+        job->output_truncated = context.truncated;
+        lua_close(state);
+        if (source != job->code)
+            free(source);
+        return args_result;
+    }
+    lua_sethook(state, lua_hook, LUA_MASKCOUNT, 1000);
+    result = luaL_loadbuffer(state, source, source_length, job->name ? job->name : "lua_job");
+    if (result == LUA_OK)
+        result = lua_pcall(state, 0, LUA_MULTRET, 0);
+    if (result != LUA_OK) {
+        const char *message = lua_tostring(state, -1);
+        lua_runtime_append_output(&context, "ERROR: ", 7);
+        lua_runtime_append_output(&context, message ? message : "unknown error",
+                                  message ? strlen(message) : 13);
+        lua_runtime_append_output(&context, "\n", 1);
+    }
+    job->output_length = context.output_length;
+    job->output_truncated = context.truncated;
+    lua_close(state);
+    if (source != job->code)
+        free(source);
+    if (job->stop_requested)
+        return ESP_ERR_INVALID_STATE;
+    if (result != LUA_OK)
+        return context.deadline_us && esp_timer_get_time() >= context.deadline_us ? ESP_ERR_TIMEOUT
+                                                                                  : ESP_FAIL;
+    return ESP_OK;
+}
+
+static void job_task(void *arg) {
+    runtime_job_t *job = arg;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    job->state = LUA_RUNTIME_JOB_RUNNING;
+    xSemaphoreGive(s_lock);
+    esp_err_t result = execute_job(job);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (job->stop_requested)
+        job->state = LUA_RUNTIME_JOB_STOPPED;
+    else if (result == ESP_OK)
+        job->state = LUA_RUNTIME_JOB_DONE;
+    else if (result == ESP_ERR_TIMEOUT)
+        job->state = LUA_RUNTIME_JOB_TIMEOUT;
+    else
+        job->state = LUA_RUNTIME_JOB_FAILED;
+    lua_runtime_job_info_t info = {.id = job->id,
+                                   .state = job->state,
+                                   .output_length = job->output_length,
+                                   .output_truncated = job->output_truncated};
+    lua_runtime_job_callback_t callback = s_callback;
+    void *callback_ctx = s_callback_ctx;
+    xSemaphoreGive(s_lock);
+    if (callback)
+        callback(&info, job->output, callback_ctx);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    job->task = NULL;
+    xSemaphoreGive(s_lock);
+    vTaskDelete(NULL);
+}
+
+esp_err_t lua_runtime_init(void) {
+    if (s_initialized)
+        return ESP_OK;
+    s_lock = xSemaphoreCreateMutex();
+    if (!s_lock)
+        return ESP_ERR_NO_MEM;
+    memset(s_jobs, 0, sizeof(s_jobs));
+    memset(s_modules, 0, sizeof(s_modules));
+    s_module_count = 0;
+    s_callback = NULL;
+    s_callback_ctx = NULL;
+    s_initialized = true;
+    ESP_LOGI(TAG, "independent Lua runtime initialized");
+    return ESP_OK;
+}
+
+esp_err_t lua_runtime_deinit(void) {
+    if (!s_initialized)
+        return ESP_OK;
+    for (size_t i = 0; i < LUA_RUNTIME_MAX_JOBS; ++i) {
+        if (s_jobs[i].used && s_jobs[i].task)
+            s_jobs[i].stop_requested = true;
+    }
+    for (int attempt = 0; attempt < 300; ++attempt) {
+        bool running = false;
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        for (size_t i = 0; i < LUA_RUNTIME_MAX_JOBS; ++i) {
+            if (s_jobs[i].used && s_jobs[i].task) {
+                running = true;
+                break;
+            }
+        }
+        xSemaphoreGive(s_lock);
+        if (!running)
+            break;
+        vTaskDelay(pdMS_TO_TICKS(10));
+        if (attempt == 299)
+            return ESP_ERR_TIMEOUT;
+    }
+    for (size_t i = 0; i < LUA_RUNTIME_MAX_JOBS; ++i)
+        free_job(&s_jobs[i]);
+    vSemaphoreDelete(s_lock);
+    s_lock = NULL;
+    s_initialized = false;
+    return ESP_OK;
+}
+
+esp_err_t lua_runtime_register_module(const char *name, lua_CFunction open_fn) {
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!name || !name[0] || !open_fn) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (size_t i = 0; i < LUA_RUNTIME_MAX_JOBS; ++i) {
+        if (s_jobs[i].used && s_jobs[i].state < LUA_RUNTIME_JOB_DONE) {
+            xSemaphoreGive(s_lock);
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+    if (s_module_count >= LUA_RUNTIME_MAX_MODULES) {
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_NO_MEM;
+    }
+    if (strlcpy(s_modules[s_module_count].name, name, sizeof(s_modules[s_module_count].name)) >=
+        sizeof(s_modules[s_module_count].name)) {
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_INVALID_SIZE;
+    }
+    s_modules[s_module_count++].open_fn = open_fn;
+    xSemaphoreGive(s_lock);
+    return ESP_OK;
+}
+
+static runtime_job_t *new_job(const lua_runtime_job_config_t *config) {
+    for (size_t i = 0; i < LUA_RUNTIME_MAX_JOBS; ++i)
+        if (!s_jobs[i].used ||
+            (s_jobs[i].task == NULL && s_jobs[i].state >= LUA_RUNTIME_JOB_DONE)) {
+            runtime_job_t *job = &s_jobs[i];
+            free_job(job);
+            job->used = true;
+            job->id = s_next_id++;
+            job->state = LUA_RUNTIME_JOB_QUEUED;
+            job->timeout_ms = config->timeout_ms;
+            job->name = strdup(config->name ? config->name : "lua_job");
+            job->code = config->code ? strdup(config->code) : NULL;
+            job->path = config->path ? strdup(config->path) : NULL;
+            job->args_json = config->args_json ? strdup(config->args_json) : NULL;
+            job->output = calloc(1, LUA_RUNTIME_OUTPUT_SIZE);
+            if (!job->name || (config->code && !job->code) || (config->path && !job->path) ||
+                (config->args_json && !job->args_json) || !job->output) {
+                free_job(job);
+                return NULL;
+            }
+            return job;
+        }
+    return NULL;
+}
+
+esp_err_t lua_runtime_start(const lua_runtime_job_config_t *config, lua_runtime_job_id_t *job_id) {
+    if (!s_initialized)
+        return ESP_ERR_INVALID_STATE;
+    if (!config || !job_id || (!config->code && !config->path))
+        return ESP_ERR_INVALID_ARG;
+    if (config->code && strlen(config->code) > LUA_RUNTIME_MAX_CODE)
+        return ESP_ERR_INVALID_SIZE;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    runtime_job_t *job = new_job(config);
+    if (job)
+        *job_id = job->id;
+    xSemaphoreGive(s_lock);
+    if (!job)
+        return ESP_ERR_NO_MEM;
+    uint32_t stack = config->stack_size ? config->stack_size : LUA_RUNTIME_DEFAULT_STACK;
+    int priority = config->priority ? config->priority : LUA_RUNTIME_DEFAULT_PRIORITY;
+    if (xTaskCreate(job_task, "lua_job", stack, job, priority, &job->task) != pdPASS) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        free_job(job);
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+esp_err_t lua_runtime_run(const lua_runtime_job_config_t *config, char *output,
+                          size_t output_size) {
+    lua_runtime_job_id_t id;
+    esp_err_t err = lua_runtime_start(config, &id);
+    if (err != ESP_OK)
+        return err;
+    while (true) {
+        lua_runtime_job_info_t info;
+        err = lua_runtime_get_job(id, &info, output, output_size);
+        if (err != ESP_OK)
+            return err;
+        if (info.state >= LUA_RUNTIME_JOB_DONE) {
+            if (info.state == LUA_RUNTIME_JOB_DONE)
+                return ESP_OK;
+            if (info.state == LUA_RUNTIME_JOB_TIMEOUT)
+                return ESP_ERR_TIMEOUT;
+            if (info.state == LUA_RUNTIME_JOB_STOPPED)
+                return ESP_ERR_INVALID_STATE;
+            return ESP_FAIL;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+esp_err_t lua_runtime_stop(lua_runtime_job_id_t job_id) {
+    if (!s_initialized)
+        return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (size_t i = 0; i < LUA_RUNTIME_MAX_JOBS; ++i) {
+        if (s_jobs[i].used && s_jobs[i].id == job_id) {
+            s_jobs[i].stop_requested = true;
+            xSemaphoreGive(s_lock);
+            return ESP_OK;
+        }
+    }
+    xSemaphoreGive(s_lock);
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t lua_runtime_get_job(lua_runtime_job_id_t job_id, lua_runtime_job_info_t *info,
+                              char *output, size_t output_size) {
+    if (!s_initialized)
+        return ESP_ERR_INVALID_STATE;
+    if (!info)
+        return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (size_t i = 0; i < LUA_RUNTIME_MAX_JOBS; ++i) {
+        if (s_jobs[i].used && s_jobs[i].id == job_id) {
+            *info = (lua_runtime_job_info_t){
+                .id = s_jobs[i].id,
+                .state = s_jobs[i].state,
+                .output_length = s_jobs[i].output_length,
+                .output_truncated = s_jobs[i].output_truncated,
+            };
+            if (output && output_size) {
+                strlcpy(output, s_jobs[i].output ? s_jobs[i].output : "", output_size);
+            }
+            xSemaphoreGive(s_lock);
+            return ESP_OK;
+        }
+    }
+    xSemaphoreGive(s_lock);
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t lua_runtime_set_callback(lua_runtime_job_callback_t callback, void *user_ctx) {
+    if (!s_initialized)
+        return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_callback = callback;
+    s_callback_ctx = user_ctx;
+    xSemaphoreGive(s_lock);
+    return ESP_OK;
+}
