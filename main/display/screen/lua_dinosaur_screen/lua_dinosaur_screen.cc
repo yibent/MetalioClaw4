@@ -17,6 +17,7 @@ lv_obj_t* s_launcher_screen;
 lv_obj_t* s_status_label;
 lv_obj_t* s_retry_button;
 lv_timer_t* s_job_timer;
+lv_timer_t* s_start_timer;
 lua_runtime_job_id_t s_job_id;
 screen_lifecycle_cb_t s_lifecycle_cb;
 bool s_job_active;
@@ -31,6 +32,10 @@ void ReturnHome() {
     if (s_job_timer != nullptr) {
         lv_timer_delete(s_job_timer);
         s_job_timer = nullptr;
+    }
+    if (s_start_timer != nullptr) {
+        lv_timer_delete(s_start_timer);
+        s_start_timer = nullptr;
     }
 
     lv_obj_t* old_screen = lv_screen_active();
@@ -124,6 +129,22 @@ void JobTimerCallback(lv_timer_t* timer) {
     }
 }
 
+void StartJobTimerCallback(lv_timer_t* timer) {
+    (void)timer;
+    s_start_timer = nullptr;
+    lv_timer_delete(timer);
+    if (s_launcher_screen == nullptr || s_job_active || s_return_requested)
+        return;
+    esp_err_t err = StartJob();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "failed to start Lua game: %s", esp_err_to_name(err));
+        if (s_status_label != nullptr)
+            lv_label_set_text_fmt(s_status_label, "Start failed: %s", esp_err_to_name(err));
+        if (s_retry_button != nullptr)
+            lv_obj_remove_flag(s_retry_button, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 lv_obj_t* CreateLauncherScreen() {
     lv_display_t* display = lv_display_get_default();
     const int width = display != nullptr ? lv_display_get_horizontal_resolution(display) : 720;
@@ -188,10 +209,8 @@ void LuaDinosaurApp::Launch(screen_lifecycle_cb_t lifecycle_cb) {
     }
 
     s_job_timer = lv_timer_create(JobTimerCallback, 100, nullptr);
-    esp_err_t err = StartJob();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "failed to start Lua game: %s", esp_err_to_name(err));
-        lv_label_set_text_fmt(s_status_label, "Start failed: %s", esp_err_to_name(err));
-        lv_obj_remove_flag(s_retry_button, LV_OBJ_FLAG_HIDDEN);
-    }
+    /* Start after the newly loaded screen has gone through at least one LVGL
+     * timer cycle. This avoids racing adapter mutex creation during boot. */
+    s_start_timer = lv_timer_create(StartJobTimerCallback, 100, nullptr);
+    lv_timer_set_repeat_count(s_start_timer, 1);
 }

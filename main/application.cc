@@ -10,6 +10,7 @@
 #include "assets.h"
 #include "settings.h"
 #include "lua_audio_backend.h"
+#include "lua_runtime.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -452,6 +453,11 @@ void Application::Start() {
 
     /* Setup the display */
     auto display = board.GetDisplay();
+    ESP_ERROR_CHECK(lua_runtime_set_ui_backend(
+        [](int timeout_ms, void* context) {
+            return static_cast<Display*>(context)->AcquireLock(timeout_ms);
+        },
+        [](void* context) { static_cast<Display*>(context)->ReleaseLock(); }, display));
 
     // Print board name/version info
     display->SetChatMessage("system", SystemInfo::GetUserAgent().c_str());

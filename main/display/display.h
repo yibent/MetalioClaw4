@@ -43,6 +43,9 @@ public:
     inline int width() const { return width_; }
     inline int height() const { return height_; }
 
+    bool AcquireLock(int timeout_ms = -1) { return Lock(timeout_ms); }
+    void ReleaseLock() { Unlock(); }
+
 protected:
     int width_ = 0;
     int height_ = 0;

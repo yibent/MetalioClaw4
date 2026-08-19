@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "esp_lv_adapter.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -34,10 +33,10 @@ typedef struct ui_context ui_context_t;
 typedef struct {
     int id;
     ui_object_type_t type;
-    lv_obj_t *object;
-    ui_context_t *context;
+    lv_obj_t* object;
+    ui_context_t* context;
     char event_id[UI_EVENT_ID_LENGTH];
-    void *owned_data;
+    void* owned_data;
 } ui_object_t;
 
 typedef struct {
@@ -53,8 +52,8 @@ typedef struct {
 
 struct ui_context {
     QueueHandle_t events;
-    lv_obj_t *screen;
-    lv_obj_t *previous_screen;
+    lv_obj_t* screen;
+    lv_obj_t* previous_screen;
     ui_object_t objects[UI_MAX_OBJECTS];
     int next_id;
     bool closed;
@@ -64,33 +63,48 @@ struct ui_context {
 };
 
 static const char kContextRegistryKey;
-static ui_context_t *s_screen_owner;
+static ui_context_t* s_screen_owner;
 static lv_fs_drv_t s_native_fs_driver;
 static bool s_native_fs_registered;
+static lua_runtime_ui_lock_callback_t s_ui_lock;
+static lua_runtime_ui_unlock_callback_t s_ui_unlock;
+static void* s_ui_backend_context;
 
-static bool ui_lock(void) { return esp_lv_adapter_lock(-1) == ESP_OK; }
+static bool ui_lock(void) {
+    return s_ui_lock && s_ui_lock(-1, s_ui_backend_context);
+}
 
-static void ui_unlock(void) { esp_lv_adapter_unlock(); }
+static void ui_unlock(void) { s_ui_unlock(s_ui_backend_context); }
 
-static void free_owned_data(ui_object_t *entry) {
+esp_err_t lua_runtime_set_ui_backend(lua_runtime_ui_lock_callback_t lock,
+                                     lua_runtime_ui_unlock_callback_t unlock, void* user_ctx) {
+    if ((lock == NULL) != (unlock == NULL))
+        return ESP_ERR_INVALID_ARG;
+    s_ui_lock = lock;
+    s_ui_unlock = unlock;
+    s_ui_backend_context = lock ? user_ctx : NULL;
+    return ESP_OK;
+}
+
+static void free_owned_data(ui_object_t* entry) {
     free(entry->owned_data);
     entry->owned_data = NULL;
 }
 
-static void *native_fs_open(lv_fs_drv_t *driver, const char *path, lv_fs_mode_t mode) {
+static void* native_fs_open(lv_fs_drv_t* driver, const char* path, lv_fs_mode_t mode) {
     (void)driver;
     if (mode != LV_FS_MODE_RD || !path || path[0] != '/')
         return NULL;
     return fopen(path, "rb");
 }
 
-static lv_fs_res_t native_fs_close(lv_fs_drv_t *driver, void *file) {
+static lv_fs_res_t native_fs_close(lv_fs_drv_t* driver, void* file) {
     (void)driver;
     return fclose(file) == 0 ? LV_FS_RES_OK : LV_FS_RES_FS_ERR;
 }
 
-static lv_fs_res_t native_fs_read(lv_fs_drv_t *driver, void *file, void *buffer, uint32_t requested,
-                                  uint32_t *read_count) {
+static lv_fs_res_t native_fs_read(lv_fs_drv_t* driver, void* file, void* buffer, uint32_t requested,
+                                  uint32_t* read_count) {
     (void)driver;
     size_t count = fread(buffer, 1, requested, file);
     if (read_count)
@@ -98,7 +112,7 @@ static lv_fs_res_t native_fs_read(lv_fs_drv_t *driver, void *file, void *buffer,
     return ferror(file) ? LV_FS_RES_FS_ERR : LV_FS_RES_OK;
 }
 
-static lv_fs_res_t native_fs_seek(lv_fs_drv_t *driver, void *file, uint32_t position,
+static lv_fs_res_t native_fs_seek(lv_fs_drv_t* driver, void* file, uint32_t position,
                                   lv_fs_whence_t whence) {
     (void)driver;
     int origin = whence == LV_FS_SEEK_CUR   ? SEEK_CUR
@@ -107,7 +121,7 @@ static lv_fs_res_t native_fs_seek(lv_fs_drv_t *driver, void *file, uint32_t posi
     return fseek(file, (long)position, origin) == 0 ? LV_FS_RES_OK : LV_FS_RES_FS_ERR;
 }
 
-static lv_fs_res_t native_fs_tell(lv_fs_drv_t *driver, void *file, uint32_t *position) {
+static lv_fs_res_t native_fs_tell(lv_fs_drv_t* driver, void* file, uint32_t* position) {
     (void)driver;
     long value = ftell(file);
     if (value < 0)
@@ -130,7 +144,7 @@ static void register_native_fs(void) {
     s_native_fs_registered = true;
 }
 
-static uint32_t read_color(lua_State *state, int table_index, const char *field,
+static uint32_t read_color(lua_State* state, int table_index, const char* field,
                            uint32_t default_value) {
     lua_getfield(state, table_index, field);
     uint32_t value = lua_isinteger(state, -1) ? (uint32_t)lua_tointeger(state, -1) : default_value;
@@ -138,24 +152,24 @@ static uint32_t read_color(lua_State *state, int table_index, const char *field,
     return value;
 }
 
-static int read_integer(lua_State *state, int table_index, const char *field, int default_value) {
+static int read_integer(lua_State* state, int table_index, const char* field, int default_value) {
     lua_getfield(state, table_index, field);
     int value = lua_isinteger(state, -1) ? (int)lua_tointeger(state, -1) : default_value;
     lua_pop(state, 1);
     return value;
 }
 
-static const char *read_string(lua_State *state, int table_index, const char *field,
-                               const char *default_value) {
+static const char* read_string(lua_State* state, int table_index, const char* field,
+                               const char* default_value) {
     lua_getfield(state, table_index, field);
-    const char *value = lua_isstring(state, -1) ? lua_tostring(state, -1) : default_value;
+    const char* value = lua_isstring(state, -1) ? lua_tostring(state, -1) : default_value;
     lua_pop(state, 1);
     return value;
 }
 
-static ui_context_t *get_context(lua_State *state) {
+static ui_context_t* get_context(lua_State* state) {
     lua_rawgetp(state, LUA_REGISTRYINDEX, &kContextRegistryKey);
-    ui_context_t *context = lua_touserdata(state, -1);
+    ui_context_t* context = lua_touserdata(state, -1);
     lua_pop(state, 1);
     if (context)
         return context;
@@ -172,7 +186,7 @@ static ui_context_t *get_context(lua_State *state) {
     return context;
 }
 
-static ui_object_t *find_object(ui_context_t *context, int id) {
+static ui_object_t* find_object(ui_context_t* context, int id) {
     for (size_t i = 0; i < UI_MAX_OBJECTS; ++i) {
         if (context->objects[i].id == id && context->objects[i].object)
             return &context->objects[i];
@@ -180,11 +194,11 @@ static ui_object_t *find_object(ui_context_t *context, int id) {
     return NULL;
 }
 
-static ui_object_t *add_object(ui_context_t *context, lv_obj_t *object, ui_object_type_t type,
-                               const char *event_id) {
+static ui_object_t* add_object(ui_context_t* context, lv_obj_t* object, ui_object_type_t type,
+                               const char* event_id) {
     for (size_t i = 0; i < UI_MAX_OBJECTS; ++i) {
         if (!context->objects[i].object) {
-            ui_object_t *entry = &context->objects[i];
+            ui_object_t* entry = &context->objects[i];
             memset(entry, 0, sizeof(*entry));
             entry->id = context->next_id++;
             entry->type = type;
@@ -198,7 +212,7 @@ static ui_object_t *add_object(ui_context_t *context, lv_obj_t *object, ui_objec
     return NULL;
 }
 
-static const char *event_type_name(lv_event_code_t code) {
+static const char* event_type_name(lv_event_code_t code) {
     switch (code) {
         case LV_EVENT_PRESSED:
             return "pressed";
@@ -218,14 +232,14 @@ static const char *event_type_name(lv_event_code_t code) {
 }
 
 static void object_event_callback(lv_event_t* event) {
-    ui_object_t *entry = lv_event_get_user_data(event);
+    ui_object_t* entry = lv_event_get_user_data(event);
     if (!entry || !entry->context || !entry->context->events)
         return;
     lv_event_code_t code = lv_event_get_code(event);
     ui_event_t queued = {.object_id = entry->id};
     strlcpy(queued.event_id, entry->event_id, sizeof(queued.event_id));
     strlcpy(queued.type, event_type_name(lv_event_get_code(event)), sizeof(queued.type));
-    lv_indev_t *indev = lv_event_get_indev(event);
+    lv_indev_t* indev = lv_event_get_indev(event);
     if (indev) {
         lv_point_t point;
         lv_indev_get_point(indev, &point);
@@ -247,7 +261,7 @@ static void object_event_callback(lv_event_t* event) {
     }
 }
 
-static void add_touch_events(lv_obj_t *object, ui_object_t *entry) {
+static void add_touch_events(lv_obj_t* object, ui_object_t* entry) {
     lv_obj_add_flag(object, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_PRESSED, entry);
     lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_PRESSING, entry);
@@ -256,17 +270,17 @@ static void add_touch_events(lv_obj_t *object, ui_object_t *entry) {
     lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_CLICKED, entry);
 }
 
-static void apply_geometry(lv_obj_t *object, int x, int y, int width, int height) {
+static void apply_geometry(lv_obj_t* object, int x, int y, int width, int height) {
     lv_obj_set_pos(object, x, y);
     lv_obj_set_size(object, width, height);
 }
 
-static lv_obj_t *read_parent(lua_State *state, ui_context_t *context, int table_index) {
+static lv_obj_t* read_parent(lua_State* state, ui_context_t* context, int table_index) {
     lua_getfield(state, table_index, "parent");
     int parent_id = lua_isinteger(state, -1) ? (int)lua_tointeger(state, -1) : 0;
     lua_pop(state, 1);
     if (parent_id) {
-        ui_object_t *parent = find_object(context, parent_id);
+        ui_object_t* parent = find_object(context, parent_id);
         if (!parent)
             luaL_error(state, "invalid parent object");
         return parent->object;
@@ -276,9 +290,9 @@ static lv_obj_t *read_parent(lua_State *state, ui_context_t *context, int table_
     return context->screen;
 }
 
-static int l_screen(lua_State *state) {
+static int l_screen(lua_State* state) {
     luaL_checktype(state, 1, LUA_TTABLE);
-    ui_context_t *context = get_context(state);
+    ui_context_t* context = get_context(state);
     uint32_t background = read_color(state, 1, "background", 0x101418);
     if (context->screen)
         return luaL_error(state, "a Lua VM can own only one screen");
@@ -295,7 +309,7 @@ static int l_screen(lua_State *state) {
     }
     lv_obj_remove_flag(context->screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(context->screen, lv_color_hex(background), 0);
-    ui_object_t *entry = add_object(context, context->screen, UI_OBJECT_SCREEN, "screen");
+    ui_object_t* entry = add_object(context, context->screen, UI_OBJECT_SCREEN, "screen");
     if (entry) {
         s_screen_owner = context;
         add_touch_events(context->screen, entry);
@@ -310,11 +324,11 @@ static int l_screen(lua_State *state) {
     return 1;
 }
 
-static int l_load(lua_State *state) {
-    ui_context_t *context = get_context(state);
+static int l_load(lua_State* state) {
+    ui_context_t* context = get_context(state);
     int id = (int)luaL_optinteger(state, 1, 0);
-    ui_object_t *entry = id ? find_object(context, id) : NULL;
-    lv_obj_t *screen = entry ? entry->object : context->screen;
+    ui_object_t* entry = id ? find_object(context, id) : NULL;
+    lv_obj_t* screen = entry ? entry->object : context->screen;
     if (!screen)
         return luaL_error(state, "invalid screen");
     if (!ui_lock())
@@ -325,11 +339,11 @@ static int l_load(lua_State *state) {
     return 0;
 }
 
-static int l_rect(lua_State *state) {
+static int l_rect(lua_State* state) {
     luaL_checktype(state, 1, LUA_TTABLE);
-    ui_context_t *context = get_context(state);
-    const char *event_id = read_string(state, 1, "event_id", NULL);
-    lv_obj_t *parent = read_parent(state, context, 1);
+    ui_context_t* context = get_context(state);
+    const char* event_id = read_string(state, 1, "event_id", NULL);
+    lv_obj_t* parent = read_parent(state, context, 1);
     int x = read_integer(state, 1, "x", 0);
     int y = read_integer(state, 1, "y", 0);
     int width = read_integer(state, 1, "width", LV_SIZE_CONTENT);
@@ -338,13 +352,13 @@ static int l_rect(lua_State *state) {
     int radius = read_integer(state, 1, "radius", 0);
     if (!ui_lock())
         return luaL_error(state, "display lock failed");
-    lv_obj_t *object = lv_obj_create(parent);
+    lv_obj_t* object = lv_obj_create(parent);
     apply_geometry(object, x, y, width, height);
     lv_obj_set_style_bg_color(object, lv_color_hex(color), 0);
     lv_obj_set_style_radius(object, radius, 0);
     lv_obj_set_style_border_width(object, 0, 0);
     lv_obj_remove_flag(object, LV_OBJ_FLAG_SCROLLABLE);
-    ui_object_t *entry = add_object(context, object, UI_OBJECT_RECT, event_id);
+    ui_object_t* entry = add_object(context, object, UI_OBJECT_RECT, event_id);
     if (!entry) {
         lv_obj_delete(object);
         ui_unlock();
@@ -358,28 +372,28 @@ static int l_rect(lua_State *state) {
     return 1;
 }
 
-static int l_circle(lua_State *state) {
+static int l_circle(lua_State* state) {
     luaL_checktype(state, 1, LUA_TTABLE);
-    ui_context_t *context = get_context(state);
-    lv_obj_t *parent = read_parent(state, context, 1);
+    ui_context_t* context = get_context(state);
+    lv_obj_t* parent = read_parent(state, context, 1);
     int x = read_integer(state, 1, "x", 0), y = read_integer(state, 1, "y", 0);
     int radius = read_integer(state, 1, "radius", 10);
     uint32_t color = read_color(state, 1, "color", 0xffffff);
     int opacity = read_integer(state, 1, "opacity", 255);
-    const char *event_id = read_string(state, 1, "event_id", NULL);
+    const char* event_id = read_string(state, 1, "event_id", NULL);
     if (radius <= 0)
         return luaL_argerror(state, 1, "radius must be positive");
     if (opacity < 0 || opacity > 255)
         return luaL_argerror(state, 1, "opacity must be between 0 and 255");
     if (!ui_lock())
         return luaL_error(state, "display lock failed");
-    lv_obj_t *object = lv_obj_create(parent);
+    lv_obj_t* object = lv_obj_create(parent);
     apply_geometry(object, x, y, radius * 2, radius * 2);
     lv_obj_set_style_bg_color(object, lv_color_hex(color), 0);
     lv_obj_set_style_radius(object, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(object, 0, 0);
     lv_obj_set_style_opa(object, (lv_opa_t)opacity, 0);
-    ui_object_t *entry = add_object(context, object, UI_OBJECT_CIRCLE, event_id);
+    ui_object_t* entry = add_object(context, object, UI_OBJECT_CIRCLE, event_id);
     if (!entry) {
         lv_obj_delete(object);
         ui_unlock();
@@ -392,8 +406,8 @@ static int l_circle(lua_State *state) {
     return 1;
 }
 
-static bool parse_points(lua_State *state, int table_index, lv_point_precise_t ** points_out,
-                         uint32_t *count_out) {
+static bool parse_points(lua_State* state, int table_index, lv_point_precise_t** points_out,
+                         uint32_t* count_out) {
     lua_getfield(state, table_index, "points");
     if (!lua_istable(state, -1)) {
         lua_pop(state, 1);
@@ -404,7 +418,7 @@ static bool parse_points(lua_State *state, int table_index, lv_point_precise_t *
         lua_pop(state, 1);
         return false;
     }
-    lv_point_precise_t *points = calloc(count, sizeof(*points));
+    lv_point_precise_t* points = calloc(count, sizeof(*points));
     if (!points) {
         lua_pop(state, 1);
         return false;
@@ -426,11 +440,11 @@ static bool parse_points(lua_State *state, int table_index, lv_point_precise_t *
     return true;
 }
 
-static int l_line(lua_State *state) {
+static int l_line(lua_State* state) {
     luaL_checktype(state, 1, LUA_TTABLE);
-    ui_context_t *context = get_context(state);
-    lv_obj_t *parent = read_parent(state, context, 1);
-    lv_point_precise_t *points = NULL;
+    ui_context_t* context = get_context(state);
+    lv_obj_t* parent = read_parent(state, context, 1);
+    lv_point_precise_t* points = NULL;
     uint32_t count = 0;
     if (!parse_points(state, 1, &points, &count))
         return luaL_error(state, "points must contain at least two {x,y} entries");
@@ -439,7 +453,7 @@ static int l_line(lua_State *state) {
     lua_getfield(state, 1, "rounded");
     bool rounded = lua_toboolean(state, -1);
     lua_pop(state, 1);
-    const char *event_id = read_string(state, 1, "event_id", NULL);
+    const char* event_id = read_string(state, 1, "event_id", NULL);
     if (width <= 0) {
         free(points);
         return luaL_argerror(state, 1, "width must be positive");
@@ -448,12 +462,12 @@ static int l_line(lua_State *state) {
         free(points);
         return luaL_error(state, "display lock failed");
     }
-    lv_obj_t *object = lv_line_create(parent);
+    lv_obj_t* object = lv_line_create(parent);
     lv_line_set_points(object, points, count);
     lv_obj_set_style_line_color(object, lv_color_hex(color), 0);
     lv_obj_set_style_line_width(object, width, 0);
     lv_obj_set_style_line_rounded(object, rounded, 0);
-    ui_object_t *entry = add_object(context, object, UI_OBJECT_LINE, event_id);
+    ui_object_t* entry = add_object(context, object, UI_OBJECT_LINE, event_id);
     if (!entry) {
         lv_obj_delete(object);
         free(points);
@@ -468,29 +482,29 @@ static int l_line(lua_State *state) {
     return 1;
 }
 
-static int l_arc(lua_State *state) {
+static int l_arc(lua_State* state) {
     luaL_checktype(state, 1, LUA_TTABLE);
-    ui_context_t *context = get_context(state);
-    lv_obj_t *parent = read_parent(state, context, 1);
+    ui_context_t* context = get_context(state);
+    lv_obj_t* parent = read_parent(state, context, 1);
     int x = read_integer(state, 1, "x", 0), y = read_integer(state, 1, "y", 0),
         w = read_integer(state, 1, "width", 80), h = read_integer(state, 1, "height", 80);
     int start = read_integer(state, 1, "start_angle", 0),
         end = read_integer(state, 1, "end_angle", 360),
         width = read_integer(state, 1, "line_width", 4);
     uint32_t color = read_color(state, 1, "color", 0xffffff);
-    const char *event_id = read_string(state, 1, "event_id", NULL);
+    const char* event_id = read_string(state, 1, "event_id", NULL);
     if (w <= 0 || h <= 0 || width <= 0)
         return luaL_argerror(state, 1, "arc width, height, and line_width must be positive");
     if (!ui_lock())
         return luaL_error(state, "display lock failed");
-    lv_obj_t *object = lv_arc_create(parent);
+    lv_obj_t* object = lv_arc_create(parent);
     apply_geometry(object, x, y, w, h);
     lv_arc_set_angles(object, start, end);
     lv_obj_set_style_arc_color(object, lv_color_hex(color), LV_PART_INDICATOR);
     lv_obj_set_style_arc_width(object, width, LV_PART_INDICATOR);
     lv_obj_set_style_arc_opa(object, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(object, LV_OPA_TRANSP, LV_PART_KNOB);
-    ui_object_t *entry = add_object(context, object, UI_OBJECT_ARC, event_id);
+    ui_object_t* entry = add_object(context, object, UI_OBJECT_ARC, event_id);
     if (!entry) {
         lv_obj_delete(object);
         ui_unlock();
@@ -505,13 +519,13 @@ static int l_arc(lua_State *state) {
     return 1;
 }
 
-static int l_image(lua_State *state) {
+static int l_image(lua_State* state) {
     luaL_checktype(state, 1, LUA_TTABLE);
-    ui_context_t *context = get_context(state);
-    const char *src = read_string(state, 1, "src", NULL);
+    ui_context_t* context = get_context(state);
+    const char* src = read_string(state, 1, "src", NULL);
     if (!src)
         return luaL_error(state, "image src is required");
-    lv_obj_t *parent = read_parent(state, context, 1);
+    lv_obj_t* parent = read_parent(state, context, 1);
     int x = read_integer(state, 1, "x", 0), y = read_integer(state, 1, "y", 0),
         rotation = read_integer(state, 1, "rotation", 0),
         scale = read_integer(state, 1, "scale", 256),
@@ -520,17 +534,17 @@ static int l_image(lua_State *state) {
         pivot_y = read_integer(state, 1, "pivot_y", 0),
         offset_x = read_integer(state, 1, "offset_x", 0),
         offset_y = read_integer(state, 1, "offset_y", 0);
-    const char *event_id = read_string(state, 1, "event_id", NULL);
+    const char* event_id = read_string(state, 1, "event_id", NULL);
     if (scale <= 0)
         return luaL_argerror(state, 1, "scale must be positive");
     if (opacity < 0 || opacity > 255)
         return luaL_argerror(state, 1, "opacity must be between 0 and 255");
-    char *owned = strdup(src);
+    char* owned = strdup(src);
     if (!owned)
         return luaL_error(state, "image source allocation failed");
     if (owned[0] == '/') {
         size_t len = strlen(owned);
-        char *mapped = malloc(len + 3);
+        char* mapped = malloc(len + 3);
         if (!mapped) {
             free(owned);
             return luaL_error(state, "image source allocation failed");
@@ -544,7 +558,7 @@ static int l_image(lua_State *state) {
         return luaL_error(state, "display lock failed");
     }
     register_native_fs();
-    lv_obj_t *object = lv_image_create(parent);
+    lv_obj_t* object = lv_image_create(parent);
     lv_image_set_src(object, owned);
     lv_obj_set_pos(object, x, y);
     lv_image_set_rotation(object, rotation * 10);
@@ -553,7 +567,7 @@ static int l_image(lua_State *state) {
     lv_image_set_offset_x(object, offset_x);
     lv_image_set_offset_y(object, offset_y);
     lv_obj_set_style_opa(object, (lv_opa_t)opacity, 0);
-    ui_object_t *entry = add_object(context, object, UI_OBJECT_IMAGE, event_id);
+    ui_object_t* entry = add_object(context, object, UI_OBJECT_IMAGE, event_id);
     if (!entry) {
         lv_obj_delete(object);
         free(owned);
@@ -568,24 +582,24 @@ static int l_image(lua_State *state) {
     return 1;
 }
 
-static int l_label(lua_State *state) {
+static int l_label(lua_State* state) {
     luaL_checktype(state, 1, LUA_TTABLE);
-    ui_context_t *context = get_context(state);
-    const char *text = read_string(state, 1, "text", "");
-    lv_obj_t *parent = read_parent(state, context, 1);
+    ui_context_t* context = get_context(state);
+    const char* text = read_string(state, 1, "text", "");
+    lv_obj_t* parent = read_parent(state, context, 1);
     int x = read_integer(state, 1, "x", 0);
     int y = read_integer(state, 1, "y", 0);
     int width = read_integer(state, 1, "width", LV_SIZE_CONTENT);
     uint32_t color = read_color(state, 1, "color", 0xffffff);
     if (!ui_lock())
         return luaL_error(state, "display lock failed");
-    lv_obj_t *object = lv_label_create(parent);
+    lv_obj_t* object = lv_label_create(parent);
     lv_label_set_text(object, text);
     lv_obj_set_pos(object, x, y);
     if (width != LV_SIZE_CONTENT)
         lv_obj_set_width(object, width);
     lv_obj_set_style_text_color(object, lv_color_hex(color), 0);
-    ui_object_t *entry = add_object(context, object, UI_OBJECT_LABEL, NULL);
+    ui_object_t* entry = add_object(context, object, UI_OBJECT_LABEL, NULL);
     if (!entry) {
         lv_obj_delete(object);
         ui_unlock();
@@ -596,12 +610,12 @@ static int l_label(lua_State *state) {
     return 1;
 }
 
-static int l_button(lua_State *state) {
+static int l_button(lua_State* state) {
     luaL_checktype(state, 1, LUA_TTABLE);
-    ui_context_t *context = get_context(state);
-    const char *text = read_string(state, 1, "text", "Button");
-    const char *event_id = read_string(state, 1, "event_id", "button");
-    lv_obj_t *parent = read_parent(state, context, 1);
+    ui_context_t* context = get_context(state);
+    const char* text = read_string(state, 1, "text", "Button");
+    const char* event_id = read_string(state, 1, "event_id", "button");
+    lv_obj_t* parent = read_parent(state, context, 1);
     int x = read_integer(state, 1, "x", 0);
     int y = read_integer(state, 1, "y", 0);
     int width = read_integer(state, 1, "width", LV_SIZE_CONTENT);
@@ -611,18 +625,18 @@ static int l_button(lua_State *state) {
     int radius = read_integer(state, 1, "radius", 6);
     if (!ui_lock())
         return luaL_error(state, "display lock failed");
-    lv_obj_t *button = lv_button_create(parent);
+    lv_obj_t* button = lv_button_create(parent);
     apply_geometry(button, x, y, width, height);
     lv_obj_set_style_bg_color(button, lv_color_hex(color), 0);
     lv_obj_set_style_radius(button, radius, 0);
-    ui_object_t *entry = add_object(context, button, UI_OBJECT_BUTTON, event_id);
+    ui_object_t* entry = add_object(context, button, UI_OBJECT_BUTTON, event_id);
     if (!entry) {
         lv_obj_delete(button);
         ui_unlock();
         return luaL_error(state, "ui object limit reached");
     }
     add_touch_events(button, entry);
-    lv_obj_t *label = lv_label_create(button);
+    lv_obj_t* label = lv_label_create(button);
     lv_label_set_text(label, text);
     lv_obj_set_style_text_color(label, lv_color_hex(text_color), 0);
     lv_obj_center(label);
@@ -631,10 +645,10 @@ static int l_button(lua_State *state) {
     return 1;
 }
 
-static int l_set_text(lua_State *state) {
-    ui_context_t *context = get_context(state);
-    ui_object_t *entry = find_object(context, (int)luaL_checkinteger(state, 1));
-    const char *text = luaL_checkstring(state, 2);
+static int l_set_text(lua_State* state) {
+    ui_context_t* context = get_context(state);
+    ui_object_t* entry = find_object(context, (int)luaL_checkinteger(state, 1));
+    const char* text = luaL_checkstring(state, 2);
     if (!entry || entry->type != UI_OBJECT_LABEL)
         return luaL_error(state, "object is not a label");
     if (!ui_lock())
@@ -644,10 +658,10 @@ static int l_set_text(lua_State *state) {
     return 0;
 }
 
-static int l_screen_size(lua_State *state) {
+static int l_screen_size(lua_State* state) {
     if (!ui_lock())
         return luaL_error(state, "display lock failed");
-    lv_display_t *display = lv_display_get_default();
+    lv_display_t* display = lv_display_get_default();
     int32_t width = display ? lv_display_get_horizontal_resolution(display) : 0;
     int32_t height = display ? lv_display_get_vertical_resolution(display) : 0;
     ui_unlock();
@@ -658,9 +672,9 @@ static int l_screen_size(lua_State *state) {
     return 2;
 }
 
-static int l_update(lua_State *state) {
-    ui_context_t *context = get_context(state);
-    ui_object_t *entry = find_object(context, (int)luaL_checkinteger(state, 1));
+static int l_update(lua_State* state) {
+    ui_context_t* context = get_context(state);
+    ui_object_t* entry = find_object(context, (int)luaL_checkinteger(state, 1));
     luaL_checktype(state, 2, LUA_TTABLE);
     if (!entry)
         return luaL_error(state, "invalid UI object");
@@ -709,7 +723,7 @@ static int l_update(lua_State *state) {
     lua_getfield(state, 2, "src");
     bool src_present = !lua_isnil(state, -1);
     bool has_src = lua_isstring(state, -1);
-    const char *src = has_src ? lua_tostring(state, -1) : NULL;
+    const char* src = has_src ? lua_tostring(state, -1) : NULL;
     lua_pop(state, 1);
     if (src_present && (!has_src || entry->type != UI_OBJECT_IMAGE))
         return luaL_error(state, "src must be a string and can only update an image");
@@ -717,7 +731,7 @@ static int l_update(lua_State *state) {
     lua_getfield(state, 2, "points");
     bool has_points = !lua_isnil(state, -1);
     lua_pop(state, 1);
-    lv_point_precise_t *points = NULL;
+    lv_point_precise_t* points = NULL;
     uint32_t point_count = 0;
     if (has_points &&
         (entry->type != UI_OBJECT_LINE || !parse_points(state, 2, &points, &point_count)))
@@ -794,7 +808,7 @@ static int l_update(lua_State *state) {
         free(points);
         return luaL_error(state, "text must be a string and can only update a label");
     }
-    const char *text = has_text ? lua_tostring(state, -1) : NULL;
+    const char* text = has_text ? lua_tostring(state, -1) : NULL;
     lua_pop(state, 1);
 
     if (!ui_lock()) {
@@ -841,14 +855,14 @@ static int l_update(lua_State *state) {
     if (has_z)
         lv_obj_move_to_index(entry->object, z);
     if (has_src) {
-        char *replacement = strdup(src);
+        char* replacement = strdup(src);
         if (!replacement) {
             ui_unlock();
             return luaL_error(state, "image source allocation failed");
         }
         if (replacement[0] == '/') {
             size_t len = strlen(replacement);
-            char *mapped = malloc(len + 3);
+            char* mapped = malloc(len + 3);
             if (!mapped) {
                 free(replacement);
                 ui_unlock();
@@ -910,26 +924,26 @@ static int l_update(lua_State *state) {
     return 0;
 }
 
-static bool object_is_descendant(lv_obj_t *object, lv_obj_t *ancestor) {
-    for (lv_obj_t *current = object; current; current = lv_obj_get_parent(current)) {
+static bool object_is_descendant(lv_obj_t* object, lv_obj_t* ancestor) {
+    for (lv_obj_t* current = object; current; current = lv_obj_get_parent(current)) {
         if (current == ancestor)
             return true;
     }
     return false;
 }
 
-static int l_delete(lua_State *state) {
-    ui_context_t *context = get_context(state);
-    ui_object_t *entry = find_object(context, (int)luaL_checkinteger(state, 1));
+static int l_delete(lua_State* state) {
+    ui_context_t* context = get_context(state);
+    ui_object_t* entry = find_object(context, (int)luaL_checkinteger(state, 1));
     if (!entry)
         return luaL_error(state, "invalid UI object");
     if (entry->type == UI_OBJECT_SCREEN)
         return luaL_error(state, "the owned screen cannot be deleted");
     if (!ui_lock())
         return luaL_error(state, "display lock failed");
-    lv_obj_t *object = entry->object;
+    lv_obj_t* object = entry->object;
     for (size_t i = 0; i < UI_MAX_OBJECTS; ++i) {
-        ui_object_t *candidate = &context->objects[i];
+        ui_object_t* candidate = &context->objects[i];
         if (candidate->object && object_is_descendant(candidate->object, object)) {
             free_owned_data(candidate);
             candidate->object = NULL;
@@ -940,8 +954,8 @@ static int l_delete(lua_State *state) {
     return 0;
 }
 
-static int l_poll_event(lua_State *state) {
-    ui_context_t *context = get_context(state);
+static int l_poll_event(lua_State* state) {
+    ui_context_t* context = get_context(state);
     lua_Integer requested_timeout = luaL_optinteger(state, 1, 0);
     if (requested_timeout < 0 || requested_timeout > UINT32_MAX) {
         return luaL_argerror(state, 1, "timeout must be between 0 and UINT32_MAX");
@@ -983,8 +997,8 @@ static int l_poll_event(lua_State *state) {
     return 1;
 }
 
-static int close_context(lua_State *state) {
-    ui_context_t *context = lua_touserdata(state, 1);
+static int close_context(lua_State* state) {
+    ui_context_t* context = lua_touserdata(state, 1);
     if (!context || context->closed)
         return 0;
     context->closed = true;
@@ -1009,7 +1023,7 @@ static int close_context(lua_State *state) {
     return 0;
 }
 
-int luaopen_ui(lua_State *state) {
+int luaopen_ui(lua_State* state) {
     if (ui_lock()) {
         register_native_fs();
         ui_unlock();

@@ -124,7 +124,7 @@ OledDisplay::~OledDisplay() {
 }
 
 bool OledDisplay::Lock(int timeout_ms) {
-    return lvgl_port_lock(timeout_ms);
+    return lvgl_port_lock(timeout_ms < 0 ? 0 : static_cast<uint32_t>(timeout_ms));
 }
 
 void OledDisplay::Unlock() {

@@ -58,6 +58,8 @@ typedef esp_err_t (*lua_runtime_audio_play_callback_t)(const char* source, bool 
 typedef esp_err_t (*lua_runtime_audio_stop_callback_t)(uint32_t handle, void* user_ctx);
 typedef esp_err_t (*lua_runtime_audio_simple_callback_t)(void* user_ctx);
 typedef bool (*lua_runtime_audio_is_playing_callback_t)(uint32_t handle, void* user_ctx);
+typedef bool (*lua_runtime_ui_lock_callback_t)(int timeout_ms, void* user_ctx);
+typedef void (*lua_runtime_ui_unlock_callback_t)(void* user_ctx);
 
 esp_err_t lua_runtime_init(void);
 esp_err_t lua_runtime_deinit(void);
@@ -73,6 +75,8 @@ esp_err_t lua_runtime_set_audio_backend(lua_runtime_audio_play_callback_t play,
                                         lua_runtime_audio_simple_callback_t stop_all,
                                         lua_runtime_audio_is_playing_callback_t is_playing,
                                         void* user_ctx);
+esp_err_t lua_runtime_set_ui_backend(lua_runtime_ui_lock_callback_t lock,
+                                     lua_runtime_ui_unlock_callback_t unlock, void* user_ctx);
 esp_err_t lua_runtime_register_uart_port(const lua_runtime_uart_port_config_t* config);
 
 #ifdef __cplusplus
