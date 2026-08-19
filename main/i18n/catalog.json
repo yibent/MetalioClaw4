@@ -2255,9 +2255,9 @@
       "en-US": "Mode1 (AT+RX=2 / AT+MODE=1)"
     },
     {
-      "key": "N_6_MIN_LOOP_LVGL_STRESS_BGM_MOTOR_CAMERA",
-      "zh-CN": "6 分钟循环：LVGL 压测 + 背景音乐 → 马达 → 摄像头",
-      "en-US": "6-min loop: LVGL stress + BGM → motor → camera"
+      "key": "LOOP_GIF_OGG",
+      "zh-CN": "循环播放 GIF 动画和自定义 OGG 音乐",
+      "en-US": "Loop custom GIF animation and OGG music"
     },
     {
       "key": "SETTINGS_AUDIO_ESP32_C5",

@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <chrono>
 #include <mutex>
+#include <atomic>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -112,6 +113,9 @@ public:
     void EnableVoiceProcessing(bool enable);
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
+    // Keep the codec output powered while a caller writes PCM directly through
+    // an external player instead of AudioService's playback queue.
+    void SetExternalPlaybackActive(bool active);
 
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
@@ -155,6 +159,7 @@ private:
     bool device_aec_enabled_ = false;  // 偏好；等语音处理器创建后再落到 AFE
     bool voice_detected_ = false;
     bool service_stopped_ = true;
+    std::atomic<bool> external_playback_active_{false};
     bool audio_input_need_warmup_ = false;
     std::mutex wake_word_mutex_;
 
