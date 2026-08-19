@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "esp_lv_adapter.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "lauxlib.h"
@@ -39,6 +40,9 @@ typedef struct {
     char type[16];
     int16_t x;
     int16_t y;
+    int16_t dx;
+    int16_t dy;
+    uint32_t time_ms;
 } ui_event_t;
 
 struct ui_context {
@@ -48,6 +52,9 @@ struct ui_context {
     ui_object_t objects[UI_MAX_OBJECTS];
     int next_id;
     bool closed;
+    bool touch_active;
+    int16_t touch_x;
+    int16_t touch_y;
 };
 
 static const char kContextRegistryKey;
@@ -129,6 +136,10 @@ static const char *event_type_name(lv_event_code_t code) {
     switch (code) {
         case LV_EVENT_PRESSED:
             return "pressed";
+        case LV_EVENT_PRESSING:
+            return "moved";
+        case LV_EVENT_PRESS_LOST:
+            return "lost";
         case LV_EVENT_RELEASED:
             return "released";
         case LV_EVENT_CLICKED:
@@ -144,6 +155,7 @@ static void object_event_callback(lv_event_t *event) {
     ui_object_t *entry = lv_event_get_user_data(event);
     if (!entry || !entry->context || !entry->context->events)
         return;
+    lv_event_code_t code = lv_event_get_code(event);
     ui_event_t queued = {.object_id = entry->id};
     strlcpy(queued.event_id, entry->event_id, sizeof(queued.event_id));
     strlcpy(queued.type, event_type_name(lv_event_get_code(event)), sizeof(queued.type));
@@ -153,13 +165,27 @@ static void object_event_callback(lv_event_t *event) {
         lv_indev_get_point(indev, &point);
         queued.x = point.x;
         queued.y = point.y;
+        queued.dx = entry->context->touch_active ? point.x - entry->context->touch_x : 0;
+        queued.dy = entry->context->touch_active ? point.y - entry->context->touch_y : 0;
+        queued.time_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        if (code == LV_EVENT_PRESSING && queued.dx == 0 && queued.dy == 0)
+            return;
+        entry->context->touch_x = point.x;
+        entry->context->touch_y = point.y;
+        entry->context->touch_active = code != LV_EVENT_RELEASED && code != LV_EVENT_PRESS_LOST;
     }
-    xQueueSend(entry->context->events, &queued, 0);
+    if (xQueueSend(entry->context->events, &queued, 0) != pdTRUE && code != LV_EVENT_PRESSING) {
+        ui_event_t discarded;
+        xQueueReceive(entry->context->events, &discarded, 0);
+        xQueueSend(entry->context->events, &queued, 0);
+    }
 }
 
 static void add_touch_events(lv_obj_t *object, ui_object_t *entry) {
     lv_obj_add_flag(object, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_PRESSED, entry);
+    lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_PRESSING, entry);
+    lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_PRESS_LOST, entry);
     lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_RELEASED, entry);
     lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_CLICKED, entry);
 }
@@ -487,7 +513,7 @@ static int l_poll_event(lua_State *state) {
             return 1;
         }
     }
-    lua_createtable(state, 0, 5);
+    lua_createtable(state, 0, 9);
     lua_pushinteger(state, event.object_id);
     lua_setfield(state, -2, "object");
     lua_pushstring(state, event.event_id);
@@ -498,6 +524,14 @@ static int l_poll_event(lua_State *state) {
     lua_setfield(state, -2, "x");
     lua_pushinteger(state, event.y);
     lua_setfield(state, -2, "y");
+    lua_pushinteger(state, event.dx);
+    lua_setfield(state, -2, "dx");
+    lua_pushinteger(state, event.dy);
+    lua_setfield(state, -2, "dy");
+    lua_pushinteger(state, event.time_ms);
+    lua_setfield(state, -2, "time_ms");
+    lua_pushinteger(state, 0);
+    lua_setfield(state, -2, "pointer");
     return 1;
 }
 

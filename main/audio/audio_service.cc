@@ -1,4 +1,6 @@
 #include "audio_service.h"
+#include <algorithm>
+#include <climits>
 #include <esp_log.h>
 #include <cstring>
 
@@ -278,13 +280,22 @@ void AudioService::AudioOutputTask() {
     xEventGroupSetBits(event_group_, AS_EVENT_OUTPUT_TASK_RUNNING);
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
-        audio_queue_cv_.wait(lock, [this]() { return !audio_playback_queue_.empty() || service_stopped_; });
+        audio_queue_cv_.wait(lock, [this]() {
+            return !audio_playback_queue_.empty() || !sound_effects_.empty() || service_stopped_;
+        });
         if (service_stopped_) {
             break;
         }
 
-        auto task = std::move(audio_playback_queue_.front());
-        audio_playback_queue_.pop_front();
+        std::unique_ptr<AudioTask> task;
+        if (!audio_playback_queue_.empty()) {
+            task = std::move(audio_playback_queue_.front());
+            audio_playback_queue_.pop_front();
+        } else {
+            task = std::make_unique<AudioTask>();
+            task->pcm.resize(codec_->output_sample_rate() * OPUS_FRAME_DURATION_MS / 1000);
+        }
+        MixSoundEffects(task->pcm);
         audio_queue_cv_.notify_all();
         lock.unlock();
 
@@ -337,7 +348,6 @@ void AudioService::OpusCodecTask() {
                     output_resampler_.Process(task->pcm.data(), task->pcm.size(), resampled.data());
                     task->pcm = std::move(resampled);
                 }
-
                 lock.lock();
                 audio_playback_queue_.push_back(std::move(task));
                 audio_queue_cv_.notify_all();
@@ -550,6 +560,48 @@ void AudioService::SetCallbacks(AudioServiceCallbacks& callbacks) {
 }
 
 void AudioService::PlaySound(const std::string_view& ogg) {
+    PlaySoundEffect(ogg, 0, 100, false);
+}
+
+bool AudioService::PlaySoundEffect(const std::string_view& ogg, uint32_t handle, uint8_t volume,
+                                   bool loop) {
+    uint64_t cache_key = 1469598103934665603ULL;
+    for (uint8_t byte : ogg) {
+        cache_key ^= byte;
+        cache_key *= 1099511628211ULL;
+    }
+    std::shared_ptr<const std::vector<int16_t>> pcm;
+    {
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        auto cached = sound_effect_cache_.find(cache_key);
+        if (cached != sound_effect_cache_.end())
+            pcm = cached->second;
+    }
+    if (!pcm) {
+        auto decoded = std::make_shared<std::vector<int16_t>>();
+        if (!DecodeSoundEffect(ogg, *decoded))
+            return false;
+        pcm = decoded;
+    }
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    if (handle != 0 && sound_effects_.size() >= 4)
+        return false;
+    if (sound_effect_cache_.find(cache_key) == sound_effect_cache_.end()) {
+        if (sound_effect_cache_.size() >= 8)
+            sound_effect_cache_.clear();
+        sound_effect_cache_[cache_key] = pcm;
+    }
+    sound_effects_.push_back(SoundEffect{
+        .handle = handle,
+        .volume = volume,
+        .loop = loop,
+        .pcm = std::move(pcm),
+    });
+    audio_queue_cv_.notify_all();
+    return true;
+}
+
+bool AudioService::DecodeSoundEffect(const std::string_view& ogg, std::vector<int16_t>& pcm) {
     if (!codec_->output_enabled()) {
         esp_timer_stop(audio_power_timer_);
         esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
@@ -570,7 +622,9 @@ void AudioService::PlaySound(const std::string_view& ogg) {
     bool seen_head = false;
     bool seen_tags = false;
     int sample_rate = 16000; // 默认值
+    std::unique_ptr<OpusDecoderWrapper> decoder;
 
+    bool queued_audio = false;
     while (true) {
         size_t pos = find_page(offset);
         if (pos == static_cast<size_t>(-1)) break;
@@ -636,21 +690,90 @@ void AudioService::PlaySound(const std::string_view& ogg) {
             }
 
             // Audio packet (Opus)
-            auto packet = std::make_unique<AudioStreamPacket>();
-            packet->sample_rate = sample_rate;
-            packet->frame_duration = 60;
-            packet->payload.resize(pkt_len);
-            std::memcpy(packet->payload.data(), pkt_ptr, pkt_len);
-            PushPacketToDecodeQueue(std::move(packet), true);
+            static constexpr size_t kMaxEffectSamples = 48000 * 5;
+            if (!decoder)
+                decoder = std::make_unique<OpusDecoderWrapper>(sample_rate, 1,
+                                                               OPUS_FRAME_DURATION_MS);
+            std::vector<uint8_t> packet(pkt_ptr, pkt_ptr + pkt_len);
+            std::vector<int16_t> decoded;
+            if (!decoder->Decode(std::move(packet), decoded))
+                return false;
+            if (pcm.size() + decoded.size() > kMaxEffectSamples)
+                return false;
+            pcm.insert(pcm.end(), decoded.begin(), decoded.end());
+            queued_audio = true;
         }
 
         offset = body_off + body_size;
     }
+    if (!queued_audio || pcm.empty())
+        return false;
+    if (sample_rate != codec_->output_sample_rate()) {
+        OpusResampler resampler;
+        resampler.Configure(sample_rate, codec_->output_sample_rate());
+        std::vector<int16_t> resampled(resampler.GetOutputSamples(pcm.size()));
+        resampler.Process(pcm.data(), pcm.size(), resampled.data());
+        pcm = std::move(resampled);
+    }
+    return true;
+}
+
+void AudioService::StopSoundEffect(uint32_t handle) {
+    if (handle == 0)
+        return;
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    std::erase_if(sound_effects_, [handle](const SoundEffect& effect) {
+        return effect.handle == handle;
+    });
+    audio_queue_cv_.notify_all();
+}
+
+void AudioService::StopAllSoundEffects() {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    std::erase_if(sound_effects_, [](const SoundEffect& effect) {
+        return effect.handle != 0;
+    });
+    audio_queue_cv_.notify_all();
+}
+
+bool AudioService::IsSoundEffectPlaying(uint32_t handle) {
+    if (handle == 0)
+        return false;
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    for (const auto& effect : sound_effects_) {
+        if (effect.handle == handle)
+            return true;
+    }
+    return false;
+}
+
+void AudioService::MixSoundEffects(std::vector<int16_t>& pcm) {
+    for (auto& effect : sound_effects_) {
+        size_t output_position = 0;
+        while (output_position < pcm.size() && effect.position < effect.pcm->size()) {
+            size_t remaining = effect.pcm->size() - effect.position;
+            size_t count = std::min(pcm.size() - output_position, remaining);
+            for (size_t i = 0; i < count; ++i) {
+                int32_t mixed = pcm[output_position + i] +
+                    (int32_t)(*effect.pcm)[effect.position + i] * effect.volume / 100;
+                pcm[output_position + i] =
+                    (int16_t)std::clamp(mixed, (int32_t)INT16_MIN, (int32_t)INT16_MAX);
+            }
+            output_position += count;
+            effect.position += count;
+            if (effect.loop && effect.position >= effect.pcm->size())
+                effect.position = 0;
+        }
+    }
+    std::erase_if(sound_effects_, [](const SoundEffect& effect) {
+        return !effect.loop && effect.position >= effect.pcm->size();
+    });
 }
 
 bool AudioService::IsIdle() {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-    return audio_encode_queue_.empty() && audio_decode_queue_.empty() && audio_playback_queue_.empty() && audio_testing_queue_.empty();
+    return audio_encode_queue_.empty() && audio_decode_queue_.empty() && audio_playback_queue_.empty() &&
+           audio_testing_queue_.empty() && sound_effects_.empty();
 }
 
 void AudioService::ResetDecoder() {

@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <chrono>
 #include <mutex>
+#include <unordered_map>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -118,6 +119,10 @@ public:
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
+    bool PlaySoundEffect(const std::string_view& sound, uint32_t handle, uint8_t volume, bool loop);
+    void StopSoundEffect(uint32_t handle);
+    void StopAllSoundEffects();
+    bool IsSoundEffectPlaying(uint32_t handle);
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);
@@ -143,6 +148,15 @@ private:
     TaskHandle_t audio_output_task_handle_ = nullptr;
     TaskHandle_t opus_codec_task_handle_ = nullptr;
     std::mutex audio_queue_mutex_;
+    struct SoundEffect {
+        uint32_t handle;
+        uint8_t volume;
+        bool loop;
+        size_t position = 0;
+        std::shared_ptr<const std::vector<int16_t>> pcm;
+    };
+    std::deque<SoundEffect> sound_effects_;
+    std::unordered_map<uint64_t, std::shared_ptr<const std::vector<int16_t>>> sound_effect_cache_;
     std::condition_variable audio_queue_cv_;
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_decode_queue_;
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_send_queue_;
@@ -167,6 +181,8 @@ private:
     void OpusCodecTask();
     void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm);
     void SetDecodeSampleRate(int sample_rate, int frame_duration);
+    bool DecodeSoundEffect(const std::string_view& ogg, std::vector<int16_t>& pcm);
+    void MixSoundEffects(std::vector<int16_t>& pcm);
     void CheckAndUpdateAudioPowerState();
 };
 

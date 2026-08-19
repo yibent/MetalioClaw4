@@ -9,6 +9,7 @@
 #include "mcp_server.h"
 #include "assets.h"
 #include "settings.h"
+#include "lua_audio_backend.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -459,6 +460,7 @@ void Application::Start() {
     auto codec = board.GetAudioCodec();
     audio_service_.Initialize(codec);
     audio_service_.Start();
+    RegisterLuaAudioBackend();
 
     AudioServiceCallbacks callbacks;
     callbacks.on_send_queue_available = [this]() {

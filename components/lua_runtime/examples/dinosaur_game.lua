@@ -1,5 +1,16 @@
 local runtime = require("runtime")
 local ui = require("ui")
+local audio = require("audio")
+
+local function play_sound(path, options)
+    if path then
+        pcall(audio.play, path, options or {})
+    end
+end
+
+if args.music then
+    play_sound(args.music, { volume = 35, loop = true })
+end
 
 local width, height = ui.screen_size()
 local screen = ui.screen({ background = 0xf7f7f7 })
@@ -105,12 +116,15 @@ local function jump()
     if game_over then
         reset_game()
         velocity_y = jump_velocity
+        play_sound(args.jump_sound, { volume = 80 })
     elseif not running then
         running = true
         velocity_y = jump_velocity
+        play_sound(args.jump_sound, { volume = 80 })
         ui.update(message, { hidden = true })
     elseif dino_y >= ground_y - dino_h - 1 then
         velocity_y = jump_velocity
+        play_sound(args.jump_sound, { volume = 80 })
     end
 end
 
@@ -161,6 +175,7 @@ while true do
                     text = "GAME OVER - TOUCH TO RESTART",
                     hidden = false,
                 })
+                play_sound(args.hit_sound, { volume = 100 })
             end
         end
 

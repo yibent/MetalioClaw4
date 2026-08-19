@@ -38,6 +38,24 @@ runtime.sleep_until(now + 33)
 print(runtime.cancelled())
 ```
 
+The built-in `audio` module is backed by the application audio service when an
+audio backend is registered:
+
+```lua
+local audio = require("audio")
+local jump = audio.play("/sdcard/game/jump.ogg", { volume = 80 })
+audio.is_playing(jump)
+audio.stop(jump)
+audio.stop_all()
+```
+
+The current application backend accepts OGG/Opus files as short one-shot
+effects. Playback handles support state queries and removal from the pending
+sound-effect mixer without clearing system speech. Volume is applied during PCM
+mixing, and `loop = true` wraps the decoded effect until its handle is stopped.
+Up to four Lua sound-effect channels can play concurrently and mix with system
+audio output. Decoded PCM is cached by content for repeated low-latency effects.
+
 The built-in `ui` module currently provides:
 
 ```text
@@ -56,6 +74,11 @@ ui.poll_event(timeout_ms)
 All LVGL operations use the project's display lock. Touch callbacks enqueue
 plain events; Lua retrieves them through `ui.poll_event()` so LVGL never calls
 into a Lua VM from the display thread.
+
+Touch events include `pressed`, `moved`, `released`, `lost`, `x`, `y`, `dx`,
+`dy`, and `time_ms`. The current hardware path is a single pointer, but move
+tracking is preserved through LVGL's `PRESSING` events and is suitable for
+swipes and drag controls.
 
 `ui.update()` can change `x`, `y`, `width`, `height`, `color`, `hidden`, and
 label `text` in one display-lock operation. Combined with the monotonic runtime

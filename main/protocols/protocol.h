@@ -95,4 +95,3 @@ protected:
 };
 
 #endif // PROTOCOL_H
-
