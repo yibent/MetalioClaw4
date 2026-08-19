@@ -13,6 +13,8 @@ extern "C" {
 
 typedef uint32_t lua_runtime_job_id_t;
 
+#define LUA_RUNTIME_CAP_UART (1u << 0)
+
 typedef enum {
     LUA_RUNTIME_JOB_QUEUED = 0,
     LUA_RUNTIME_JOB_RUNNING,
@@ -30,6 +32,7 @@ typedef struct {
     uint32_t timeout_ms;
     uint32_t stack_size;
     int priority;
+    uint32_t capabilities;
 } lua_runtime_job_config_t;
 
 typedef struct {
@@ -38,6 +41,13 @@ typedef struct {
     size_t output_length;
     bool output_truncated;
 } lua_runtime_job_info_t;
+
+typedef struct {
+    int port;
+    int tx_pin;
+    int rx_pin;
+    uint32_t max_baud_rate;
+} lua_runtime_uart_port_config_t;
 
 typedef void (*lua_runtime_job_callback_t)(const lua_runtime_job_info_t* info, const char* output,
                                            void* user_ctx);
@@ -63,6 +73,7 @@ esp_err_t lua_runtime_set_audio_backend(lua_runtime_audio_play_callback_t play,
                                         lua_runtime_audio_simple_callback_t stop_all,
                                         lua_runtime_audio_is_playing_callback_t is_playing,
                                         void* user_ctx);
+esp_err_t lua_runtime_register_uart_port(const lua_runtime_uart_port_config_t* config);
 
 #ifdef __cplusplus
 }

@@ -31,6 +31,7 @@ set(SOURCES "audio/audio_codec.cc"
             "display/screen/info_screen/info_screen.cc"
             "display/screen/standby_screen/standby_screen.cc"
             "display/screen/game_2048_screen/game_2048_screen.cc"
+            "display/screen/lua_dinosaur_screen/lua_dinosaur_screen.cc"
             "display/screen/calculator_screen/calculator_screen.cc"
             "display/screen/calendar_screen/calendar_screen.cc"
             "display/screen/weather_screen/weather_screen.cc"
@@ -88,7 +89,7 @@ set(SOURCES "audio/audio_codec.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "i18n" "display" "display/font" "display/lvgl_display" "display/lvgl_display/jpg" "display/screen" "display/screen/boot_screen" "display/screen/ota_screen" "display/screen/home_screen" "display/screen/game_2048_screen" "display/screen/calculator_screen" "display/screen/calendar_screen" "display/screen/weather_screen" "display/screen/camera_screen" "display/screen/backlight_screen" "display/screen/settings_screen" "display/screen/bluetooth_screen" "display/screen/chat_screen" "display/screen/network_screen" "display/screen/sd_card_screen" "display/screen/pin_test_screen" "display/screen/test_screen" "display/screen/openclaw_screen" "display/screen/ai_image_gen_screen" "display/screen/translate_screen" "display/screen/info_screen" "display/screen/standby_screen" "audio" "protocols")
+set(INCLUDE_DIRS "." "i18n" "display" "display/font" "display/lvgl_display" "display/lvgl_display/jpg" "display/screen" "display/screen/boot_screen" "display/screen/ota_screen" "display/screen/home_screen" "display/screen/game_2048_screen" "display/screen/lua_dinosaur_screen" "display/screen/calculator_screen" "display/screen/calendar_screen" "display/screen/weather_screen" "display/screen/camera_screen" "display/screen/backlight_screen" "display/screen/settings_screen" "display/screen/bluetooth_screen" "display/screen/chat_screen" "display/screen/network_screen" "display/screen/sd_card_screen" "display/screen/pin_test_screen" "display/screen/test_screen" "display/screen/openclaw_screen" "display/screen/ai_image_gen_screen" "display/screen/translate_screen" "display/screen/info_screen" "display/screen/standby_screen" "audio" "protocols")
 
 # Add board common files
 file(GLOB BOARD_COMMON_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/boards/common/*.cc)
@@ -273,6 +274,10 @@ idf_component_register(SRCS ${SOURCES}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     )
+
+target_add_binary_data(${COMPONENT_LIB}
+    "${PROJECT_DIR}/components/lua_runtime/examples/dinosaur_game.lua"
+    TEXT RENAME_TO lua_dinosaur_game)
 
 target_link_libraries(${COMPONENT_LIB} PRIVATE idf::esp_driver_tsens)
 

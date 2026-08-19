@@ -38,6 +38,7 @@ typedef struct {
     size_t output_length;
     bool output_truncated;
     uint32_t timeout_ms;
+    uint32_t capabilities;
     volatile bool stop_requested;
     TaskHandle_t task;
 } runtime_job_t;
@@ -325,6 +326,8 @@ static void open_modules(lua_State *state) {
     lua_pop(state, 1);
     luaL_requiref(state, "audio", luaopen_audio, 1);
     lua_pop(state, 1);
+    luaL_requiref(state, "uart", luaopen_uart, 1);
+    lua_pop(state, 1);
     for (size_t i = 0; i < s_module_count; ++i) {
         luaL_requiref(state, s_modules[i].name, s_modules[i].open_fn, 1);
         lua_pop(state, 1);
@@ -440,6 +443,7 @@ static esp_err_t execute_job(runtime_job_t *job) {
         .output_size = LUA_RUNTIME_OUTPUT_SIZE,
         .deadline_us = job->timeout_ms ? esp_timer_get_time() + (int64_t)job->timeout_ms * 1000 : 0,
         .stop_requested = &job->stop_requested,
+        .capabilities = job->capabilities,
     };
     lua_runtime_set_context(state, &context);
     lua_pushcfunction(state, l_open_modules);
@@ -540,6 +544,12 @@ esp_err_t lua_runtime_init(void) {
     s_audio_stop_all = NULL;
     s_audio_is_playing = NULL;
     s_audio_ctx = NULL;
+    esp_err_t uart_result = lua_uart_init();
+    if (uart_result != ESP_OK) {
+        vSemaphoreDelete(s_lock);
+        s_lock = NULL;
+        return uart_result;
+    }
     s_initialized = true;
     ESP_LOGI(TAG, "independent Lua runtime initialized");
     return ESP_OK;
@@ -570,6 +580,7 @@ esp_err_t lua_runtime_deinit(void) {
     }
     for (size_t i = 0; i < LUA_RUNTIME_MAX_JOBS; ++i)
         free_job(&s_jobs[i]);
+    lua_uart_deinit();
     vSemaphoreDelete(s_lock);
     s_lock = NULL;
     s_initialized = false;
@@ -614,6 +625,7 @@ static runtime_job_t *new_job(const lua_runtime_job_config_t *config) {
             job->id = s_next_id++;
             job->state = LUA_RUNTIME_JOB_QUEUED;
             job->timeout_ms = config->timeout_ms;
+            job->capabilities = config->capabilities;
             job->name = strdup(config->name ? config->name : "lua_job");
             job->code = config->code ? strdup(config->code) : NULL;
             job->path = config->path ? strdup(config->path) : NULL;

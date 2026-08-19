@@ -13,6 +13,7 @@ lua_runtime_job_config_t config = {
     .path = "/sdcard/touch_demo.lua",
     .args_json = "{\"title\":\"Demo\"}",
     .timeout_ms = 0,
+    .capabilities = 0,
 };
 
 lua_runtime_job_id_t job_id;
@@ -25,6 +26,32 @@ Lua VM and FreeRTOS task.
 
 Custom native modules can be registered once with
 `lua_runtime_register_module()` before jobs are started.
+
+Hardware capabilities are explicit per job. `LUA_RUNTIME_CAP_UART` enables the
+UART module, but a board must also register each allowed UART port with
+`lua_runtime_register_uart_port()`. Registration fixes the port's TX/RX pins and
+maximum baud rate; Lua cannot remap pins.
+
+Board initialization registers an explicitly wired port before starting jobs:
+
+```c
+lua_runtime_uart_port_config_t uart_port = {
+    .port = 3,
+    .tx_pin = 30,
+    .rx_pin = 31,
+    .max_baud_rate = 921600,
+};
+ESP_ERROR_CHECK(lua_runtime_register_uart_port(&uart_port));
+
+lua_runtime_job_config_t uart_job = {
+    .name = "serial-tool",
+    .path = "/sdcard/serial-tool.lua",
+    .capabilities = LUA_RUNTIME_CAP_UART,
+};
+```
+
+The pins above are illustrative. A board must register pins that are physically
+available and not used by its display, storage, audio, modem, GPS, or console.
 
 ## Lua API
 
@@ -55,6 +82,29 @@ sound-effect mixer without clearing system speech. Volume is applied during PCM
 mixing, and `loop = true` wraps the decoded effect until its handle is stopped.
 Up to four Lua sound-effect channels can play concurrently and mix with system
 audio output. Decoded PCM is cached by content for repeated low-latency effects.
+
+The built-in `uart` module is capability-gated and provides binary-safe serial
+I/O:
+
+```lua
+local uart = require("uart")
+local port = uart.open({
+    port = 3,
+    baud_rate = 115200,
+    data_bits = 8,
+    stop_bits = 1,
+    parity = "none",
+    rx_buffer = 2048,
+})
+port:write("AT\r\n")
+local response = port:read(256, 1000)
+local pending = port:available()
+port:flush()
+port:close()
+```
+
+`read()` and `poll_event()` periodically check runtime cancellation and timeout.
+UART handles are exclusive and automatically released when their Lua VM closes.
 
 The built-in `ui` module currently provides:
 

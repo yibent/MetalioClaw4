@@ -27,6 +27,7 @@
 #include "camera_screen/camera_screen.h"
 #include "chat_screen/chat_screen.h"
 #include "game_2048_screen/game_2048_screen.h"
+#include "lua_dinosaur_screen/lua_dinosaur_screen.h"
 #include "openclaw_screen/openclaw_screen.h"
 #include "ai_image_gen_screen/ai_image_gen_screen.h"
 #include "translate_screen/translate_screen.h"
@@ -72,6 +73,15 @@ void game_2048_lifecycle_cb(screen_lifecycle_event_t event) {
         ESP_LOGI(TAG_HOME, "load: game_2048");
     } else {
         ESP_LOGI(TAG_HOME, "unload: game_2048");
+    }
+}
+
+void lua_dinosaur_lifecycle_cb(screen_lifecycle_event_t event) {
+    PwrKey_OnScreenLifecycle("lua_dinosaur", event);
+    if (event == SCREEN_LIFECYCLE_LOAD) {
+        ESP_LOGI(TAG_HOME, "load: lua_dinosaur");
+    } else {
+        ESP_LOGI(TAG_HOME, "unload: lua_dinosaur");
     }
 }
 
@@ -324,6 +334,10 @@ void LaunchGame2048(screen_lifecycle_cb_t lifecycle_cb) {
     }
 }
 
+void LaunchLuaDinosaur(screen_lifecycle_cb_t lifecycle_cb) {
+    LuaDinosaurApp::Launch(lifecycle_cb);
+}
+
 void LaunchCalculator(screen_lifecycle_cb_t lifecycle_cb) {
     lv_obj_t* old_scr = lv_screen_active();
     lv_obj_t* app = Calculator::Create();
@@ -497,6 +511,7 @@ constexpr AppEntry kApps[] = {
     {"sd",             "SD卡",     LaunchSdCard,        sd_card_lifecycle_cb,       false},
     {"pin",            "引脚测试", LaunchPinTest,       pin_test_lifecycle_cb,      false},
     {"2048",           "2048",     LaunchGame2048,      game_2048_lifecycle_cb,     false},
+    {"2048",           "Lua 小恐龙", LaunchLuaDinosaur,  lua_dinosaur_lifecycle_cb,  false},
     {"info",           "系统信息", LaunchInfo,          info_lifecycle_cb,          false},
     {"test",           "测试",     LaunchTest,          test_lifecycle_cb,          false},
     {"settings",       "设置",     LaunchSettings,      settings_lifecycle_cb,      false},

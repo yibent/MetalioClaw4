@@ -44,6 +44,18 @@ local message = ui.label({
     y = math.floor(height * 0.34),
     color = 0x53565a,
 })
+local back_button = ui.button({
+    parent = screen,
+    text = "BACK",
+    event_id = "back",
+    x = 18,
+    y = height - 62,
+    width = 92,
+    height = 42,
+    color = 0x53565a,
+    text_color = 0xffffff,
+    radius = 6,
+})
 
 local dino = ui.rect({
     parent = screen,
@@ -95,6 +107,7 @@ local game_over = false
 local score = 0
 local last_frame = runtime.now_ms()
 local next_frame = last_frame
+local should_exit = false
 
 local function reset_game()
     dino_y = ground_y - dino_h
@@ -135,13 +148,19 @@ local function overlaps(obstacle)
         and dino_y + dino_h - padding > ground_y - obstacle.height
 end
 
-while true do
+while not should_exit and not runtime.cancelled() do
     local event = ui.poll_event(0)
     while event do
-        if event.type == "pressed" then
+        if event.id == "back" and event.type == "pressed" then
+            should_exit = true
+        elseif event.type == "pressed" then
             jump()
         end
         event = ui.poll_event(0)
+    end
+
+    if should_exit then
+        break
     end
 
     local now = runtime.now_ms()
