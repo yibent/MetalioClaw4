@@ -31,9 +31,29 @@ def resize_square_icon(path: Path, target_size: int) -> None:
           f"{target_size}x{target_size}")
 
 
+def resize_image_to_fit(path: Path, max_width: int, max_height: int) -> None:
+    with Image.open(path) as image:
+        width, height = image.size
+        scale = min(max_width / width, max_height / height)
+        target_width = max(1, round(width * scale))
+        target_height = max(1, round(height * scale))
+        if (width, height) == (target_width, target_height):
+            return
+
+        if image.mode not in ("RGB", "RGBA"):
+            image = image.convert("RGBA")
+        resized = image.resize((target_width, target_height), LANCZOS)
+        resized.save(path, format="PNG", optimize=True)
+
+    print(f"Prepared boot image: {path.name} {width}x{height} -> "
+          f"{target_width}x{target_height}")
+
+
 def prepare_assets(source_dir: Path, output_dir: Path, icon_glob: str,
                    icon_size: int, native_copy_glob: str,
-                   native_copy_suffix: str) -> None:
+                   native_copy_suffix: str, boot_image: str,
+                   boot_image_max_width: int,
+                   boot_image_max_height: int) -> None:
     source_dir = source_dir.resolve()
     output_dir = output_dir.resolve()
 
@@ -43,6 +63,10 @@ def prepare_assets(source_dir: Path, output_dir: Path, icon_glob: str,
         raise ValueError("asset source and output directories must be different")
     if icon_size < 1 or icon_size > 65535:
         raise ValueError("icon size must be in the SPNG range 1..65535")
+    if boot_image_max_width < 1 or boot_image_max_width > 65535:
+        raise ValueError("boot image width must be in the SPNG range 1..65535")
+    if boot_image_max_height < 1 or boot_image_max_height > 65535:
+        raise ValueError("boot image height must be in the SPNG range 1..65535")
 
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -64,6 +88,13 @@ def prepare_assets(source_dir: Path, output_dir: Path, icon_glob: str,
     if matched == 0:
         raise ValueError(f"no PNG assets matched desktop icon glob: {icon_glob}")
 
+    boot_image_path = output_dir / boot_image
+    if not boot_image_path.is_file():
+        raise ValueError(f"boot image does not exist: {boot_image_path}")
+    resize_image_to_fit(
+        boot_image_path, boot_image_max_width, boot_image_max_height
+    )
+
     print(f"Prepared {matched} desktop icons for {icon_size}x{icon_size} SPNG output")
     if native_copies:
         print(f"Preserved {native_copies} native-size preview icons")
@@ -71,7 +102,7 @@ def prepare_assets(source_dir: Path, output_dir: Path, icon_glob: str,
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Copy assets and normalize square desktop icons before SPNG conversion"
+        description="Copy and resize selected assets before SPNG conversion"
     )
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -79,6 +110,9 @@ def main() -> None:
     parser.add_argument("--icon-size", required=True, type=int)
     parser.add_argument("--native-copy-glob", default="")
     parser.add_argument("--native-copy-suffix", default="_preview")
+    parser.add_argument("--boot-image", required=True)
+    parser.add_argument("--boot-image-max-width", required=True, type=int)
+    parser.add_argument("--boot-image-max-height", required=True, type=int)
     args = parser.parse_args()
 
     prepare_assets(
@@ -88,6 +122,9 @@ def main() -> None:
         args.icon_size,
         args.native_copy_glob,
         args.native_copy_suffix,
+        args.boot_image,
+        args.boot_image_max_width,
+        args.boot_image_max_height,
     )
 
 

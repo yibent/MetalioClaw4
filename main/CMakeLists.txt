@@ -111,6 +111,8 @@ endfunction()
 set(BUILTIN_TEXT_FONT font_puhui_14_1)
 set(BUILTIN_ICON_FONT font_awesome_14_1)
 set(DESKTOP_APP_ICON_SIZE 128)
+set(BOOT_IMAGE_MAX_WIDTH 140)
+set(BOOT_IMAGE_MAX_HEIGHT 140)
 
 # Add board files according to BOARD_TYPE
 if(CONFIG_BOARD_TYPE_METALIO_CLAW_4)
@@ -461,8 +463,8 @@ else()
 endif()
 
 # SPNG is decoded a slice at a time and cannot be scaled by LVGL. Normalize
-# desktop icons before packaging so their encoded dimensions match the active
-# board's home-screen layout. Other image assets keep their source dimensions.
+# desktop icons and the boot image before packaging so their encoded dimensions
+# match the UI layout. Other image assets keep their source dimensions.
 idf_build_get_property(python PYTHON)
 set(PREPARED_RESOURCE_ASSETS_DIR "${CMAKE_BINARY_DIR}/prepared_xingzhi-assets")
 file(GLOB RESOURCE_ASSET_INPUTS CONFIGURE_DEPENDS
@@ -476,10 +478,13 @@ add_custom_target(prepare_resource_assets
             --icon-size "${DESKTOP_APP_ICON_SIZE}"
             --native-copy-glob "ic_app_home_theme*_theme.png"
             --native-copy-suffix "_preview"
+            --boot-image "ic_boot_image.png"
+            --boot-image-max-width "${BOOT_IMAGE_MAX_WIDTH}"
+            --boot-image-max-height "${BOOT_IMAGE_MAX_HEIGHT}"
     DEPENDS
         "${PROJECT_DIR}/scripts/spiffs_assets/prepare_spng_assets.py"
         ${RESOURCE_ASSET_INPUTS}
-    COMMENT "Preparing resolution-specific desktop icons for SPNG conversion"
+    COMMENT "Preparing resolution-specific images for SPNG conversion"
     VERBATIM)
 
 spiffs_create_partition_assets(
