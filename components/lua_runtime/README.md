@@ -63,6 +63,10 @@ ui.screen(options)
 ui.screen_size()
 ui.load(screen)
 ui.rect(options)
+ui.circle(options)
+ui.line(options)
+ui.arc(options)
+ui.image(options)
 ui.label(options)
 ui.button(options)
 ui.set_text(label, text)
@@ -80,10 +84,44 @@ Touch events include `pressed`, `moved`, `released`, `lost`, `x`, `y`, `dx`,
 tracking is preserved through LVGL's `PRESSING` events and is suitable for
 swipes and drag controls.
 
-`ui.update()` can change `x`, `y`, `width`, `height`, `color`, `hidden`, and
-label `text` in one display-lock operation. Combined with the monotonic runtime
+Geometry and images can be created directly:
+
+```lua
+local ball = ui.circle({ parent = screen, x = 20, y = 20, radius = 12,
+    color = 0xffcc00, opacity = 255, event_id = "ball" })
+
+local ground = ui.line({ parent = screen, points = {
+    { x = 0, y = 180 }, { x = 320, y = 180 },
+}, color = 0xffffff, width = 3, rounded = true })
+
+local gauge = ui.arc({ parent = screen, x = 220, y = 20,
+    width = 72, height = 72, start_angle = 30, end_angle = 280,
+    color = 0x20c997, line_width = 6 })
+
+local sprite = ui.image({ parent = screen, src = "/sdcard/game/dino.png",
+    x = 40, y = 120, rotation = 0, scale = 256,
+    pivot_x = 16, pivot_y = 16, opacity = 255 })
+```
+
+Image sources can be an existing resource-partition path such as
+`A:ic_app_back.spng`, or an absolute native filesystem path such as
+`/sdcard/game/dino.png`. Native paths are exposed to LVGL through a read-only
+filesystem adapter. The current firmware enables PNG decoding. The resource
+partition's existing SPNG decoder remains available for `A:` assets.
+
+`rotation` is expressed in degrees and `scale` uses LVGL units (`256` is 1x,
+`128` is 0.5x, and `512` is 2x). `offset_x` and `offset_y` select an offset
+inside an image, which is useful for sprite sheets. Any new graphical object
+can receive touch events by setting `event_id`.
+
+`ui.update()` can change common `x`, `y`, `width`, `height`, `color`,
+`opacity`, `hidden`, and `z` properties. It can also replace line `points`, arc
+`start_angle`, `end_angle`, and `line_width`, image `src`, `rotation`, `scale`,
+`pivot_x`, `pivot_y`, `offset_x`, and `offset_y`, and label `text`. Updates are
+applied in one display-lock operation. Combined with the monotonic runtime
 clock, this supports fixed-rate game loops without accumulating frame drift.
 
 See `examples/touch_demo.lua` for a basic rendering example and
 `examples/dinosaur_game.lua` for a complete 30 FPS touch game with movement,
-collision detection, scoring, and restart behavior.
+collision detection, scoring, and restart behavior. `examples/graphics_demo.lua`
+demonstrates animated geometry, image transforms, and drag tracking.

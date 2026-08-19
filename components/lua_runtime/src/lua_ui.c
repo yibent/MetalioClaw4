@@ -1,5 +1,6 @@
 #include "lua_ui.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,6 +23,10 @@ typedef enum {
     UI_OBJECT_RECT,
     UI_OBJECT_LABEL,
     UI_OBJECT_BUTTON,
+    UI_OBJECT_CIRCLE,
+    UI_OBJECT_LINE,
+    UI_OBJECT_ARC,
+    UI_OBJECT_IMAGE,
 } ui_object_type_t;
 
 typedef struct ui_context ui_context_t;
@@ -32,6 +37,7 @@ typedef struct {
     lv_obj_t *object;
     ui_context_t *context;
     char event_id[UI_EVENT_ID_LENGTH];
+    void *owned_data;
 } ui_object_t;
 
 typedef struct {
@@ -59,10 +65,70 @@ struct ui_context {
 
 static const char kContextRegistryKey;
 static ui_context_t *s_screen_owner;
+static lv_fs_drv_t s_native_fs_driver;
+static bool s_native_fs_registered;
 
 static bool ui_lock(void) { return esp_lv_adapter_lock(-1) == ESP_OK; }
 
 static void ui_unlock(void) { esp_lv_adapter_unlock(); }
+
+static void free_owned_data(ui_object_t *entry) {
+    free(entry->owned_data);
+    entry->owned_data = NULL;
+}
+
+static void *native_fs_open(lv_fs_drv_t *driver, const char *path, lv_fs_mode_t mode) {
+    (void)driver;
+    if (mode != LV_FS_MODE_RD || !path || path[0] != '/')
+        return NULL;
+    return fopen(path, "rb");
+}
+
+static lv_fs_res_t native_fs_close(lv_fs_drv_t *driver, void *file) {
+    (void)driver;
+    return fclose(file) == 0 ? LV_FS_RES_OK : LV_FS_RES_FS_ERR;
+}
+
+static lv_fs_res_t native_fs_read(lv_fs_drv_t *driver, void *file, void *buffer, uint32_t requested,
+                                  uint32_t *read_count) {
+    (void)driver;
+    size_t count = fread(buffer, 1, requested, file);
+    if (read_count)
+        *read_count = (uint32_t)count;
+    return ferror(file) ? LV_FS_RES_FS_ERR : LV_FS_RES_OK;
+}
+
+static lv_fs_res_t native_fs_seek(lv_fs_drv_t *driver, void *file, uint32_t position,
+                                  lv_fs_whence_t whence) {
+    (void)driver;
+    int origin = whence == LV_FS_SEEK_CUR   ? SEEK_CUR
+                 : whence == LV_FS_SEEK_END ? SEEK_END
+                                            : SEEK_SET;
+    return fseek(file, (long)position, origin) == 0 ? LV_FS_RES_OK : LV_FS_RES_FS_ERR;
+}
+
+static lv_fs_res_t native_fs_tell(lv_fs_drv_t *driver, void *file, uint32_t *position) {
+    (void)driver;
+    long value = ftell(file);
+    if (value < 0)
+        return LV_FS_RES_FS_ERR;
+    *position = (uint32_t)value;
+    return LV_FS_RES_OK;
+}
+
+static void register_native_fs(void) {
+    if (s_native_fs_registered)
+        return;
+    lv_fs_drv_init(&s_native_fs_driver);
+    s_native_fs_driver.letter = 'L';
+    s_native_fs_driver.open_cb = native_fs_open;
+    s_native_fs_driver.close_cb = native_fs_close;
+    s_native_fs_driver.read_cb = native_fs_read;
+    s_native_fs_driver.seek_cb = native_fs_seek;
+    s_native_fs_driver.tell_cb = native_fs_tell;
+    lv_fs_drv_register(&s_native_fs_driver);
+    s_native_fs_registered = true;
+}
 
 static uint32_t read_color(lua_State *state, int table_index, const char *field,
                            uint32_t default_value) {
@@ -151,7 +217,7 @@ static const char *event_type_name(lv_event_code_t code) {
     }
 }
 
-static void object_event_callback(lv_event_t *event) {
+static void object_event_callback(lv_event_t* event) {
     ui_object_t *entry = lv_event_get_user_data(event);
     if (!entry || !entry->context || !entry->context->events)
         return;
@@ -292,6 +358,216 @@ static int l_rect(lua_State *state) {
     return 1;
 }
 
+static int l_circle(lua_State *state) {
+    luaL_checktype(state, 1, LUA_TTABLE);
+    ui_context_t *context = get_context(state);
+    lv_obj_t *parent = read_parent(state, context, 1);
+    int x = read_integer(state, 1, "x", 0), y = read_integer(state, 1, "y", 0);
+    int radius = read_integer(state, 1, "radius", 10);
+    uint32_t color = read_color(state, 1, "color", 0xffffff);
+    int opacity = read_integer(state, 1, "opacity", 255);
+    const char *event_id = read_string(state, 1, "event_id", NULL);
+    if (radius <= 0)
+        return luaL_argerror(state, 1, "radius must be positive");
+    if (opacity < 0 || opacity > 255)
+        return luaL_argerror(state, 1, "opacity must be between 0 and 255");
+    if (!ui_lock())
+        return luaL_error(state, "display lock failed");
+    lv_obj_t *object = lv_obj_create(parent);
+    apply_geometry(object, x, y, radius * 2, radius * 2);
+    lv_obj_set_style_bg_color(object, lv_color_hex(color), 0);
+    lv_obj_set_style_radius(object, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(object, 0, 0);
+    lv_obj_set_style_opa(object, (lv_opa_t)opacity, 0);
+    ui_object_t *entry = add_object(context, object, UI_OBJECT_CIRCLE, event_id);
+    if (!entry) {
+        lv_obj_delete(object);
+        ui_unlock();
+        return luaL_error(state, "ui object limit reached");
+    }
+    if (event_id)
+        add_touch_events(object, entry);
+    ui_unlock();
+    lua_pushinteger(state, entry->id);
+    return 1;
+}
+
+static bool parse_points(lua_State *state, int table_index, lv_point_precise_t ** points_out,
+                         uint32_t *count_out) {
+    lua_getfield(state, table_index, "points");
+    if (!lua_istable(state, -1)) {
+        lua_pop(state, 1);
+        return false;
+    }
+    size_t count = lua_rawlen(state, -1);
+    if (count < 2 || count > 256) {
+        lua_pop(state, 1);
+        return false;
+    }
+    lv_point_precise_t *points = calloc(count, sizeof(*points));
+    if (!points) {
+        lua_pop(state, 1);
+        return false;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        lua_rawgeti(state, -1, (lua_Integer)i + 1);
+        if (!lua_istable(state, -1)) {
+            free(points);
+            lua_pop(state, 2);
+            return false;
+        }
+        points[i].x = (lv_value_precise_t)read_integer(state, -1, "x", 0);
+        points[i].y = (lv_value_precise_t)read_integer(state, -1, "y", 0);
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+    *points_out = points;
+    *count_out = (uint32_t)count;
+    return true;
+}
+
+static int l_line(lua_State *state) {
+    luaL_checktype(state, 1, LUA_TTABLE);
+    ui_context_t *context = get_context(state);
+    lv_obj_t *parent = read_parent(state, context, 1);
+    lv_point_precise_t *points = NULL;
+    uint32_t count = 0;
+    if (!parse_points(state, 1, &points, &count))
+        return luaL_error(state, "points must contain at least two {x,y} entries");
+    uint32_t color = read_color(state, 1, "color", 0xffffff);
+    int width = read_integer(state, 1, "width", 2);
+    lua_getfield(state, 1, "rounded");
+    bool rounded = lua_toboolean(state, -1);
+    lua_pop(state, 1);
+    const char *event_id = read_string(state, 1, "event_id", NULL);
+    if (width <= 0) {
+        free(points);
+        return luaL_argerror(state, 1, "width must be positive");
+    }
+    if (!ui_lock()) {
+        free(points);
+        return luaL_error(state, "display lock failed");
+    }
+    lv_obj_t *object = lv_line_create(parent);
+    lv_line_set_points(object, points, count);
+    lv_obj_set_style_line_color(object, lv_color_hex(color), 0);
+    lv_obj_set_style_line_width(object, width, 0);
+    lv_obj_set_style_line_rounded(object, rounded, 0);
+    ui_object_t *entry = add_object(context, object, UI_OBJECT_LINE, event_id);
+    if (!entry) {
+        lv_obj_delete(object);
+        free(points);
+        ui_unlock();
+        return luaL_error(state, "ui object limit reached");
+    }
+    entry->owned_data = points;
+    if (event_id)
+        add_touch_events(object, entry);
+    ui_unlock();
+    lua_pushinteger(state, entry->id);
+    return 1;
+}
+
+static int l_arc(lua_State *state) {
+    luaL_checktype(state, 1, LUA_TTABLE);
+    ui_context_t *context = get_context(state);
+    lv_obj_t *parent = read_parent(state, context, 1);
+    int x = read_integer(state, 1, "x", 0), y = read_integer(state, 1, "y", 0),
+        w = read_integer(state, 1, "width", 80), h = read_integer(state, 1, "height", 80);
+    int start = read_integer(state, 1, "start_angle", 0),
+        end = read_integer(state, 1, "end_angle", 360),
+        width = read_integer(state, 1, "line_width", 4);
+    uint32_t color = read_color(state, 1, "color", 0xffffff);
+    const char *event_id = read_string(state, 1, "event_id", NULL);
+    if (w <= 0 || h <= 0 || width <= 0)
+        return luaL_argerror(state, 1, "arc width, height, and line_width must be positive");
+    if (!ui_lock())
+        return luaL_error(state, "display lock failed");
+    lv_obj_t *object = lv_arc_create(parent);
+    apply_geometry(object, x, y, w, h);
+    lv_arc_set_angles(object, start, end);
+    lv_obj_set_style_arc_color(object, lv_color_hex(color), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(object, width, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(object, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(object, LV_OPA_TRANSP, LV_PART_KNOB);
+    ui_object_t *entry = add_object(context, object, UI_OBJECT_ARC, event_id);
+    if (!entry) {
+        lv_obj_delete(object);
+        ui_unlock();
+        return luaL_error(state, "ui object limit reached");
+    }
+    if (event_id)
+        add_touch_events(object, entry);
+    else
+        lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    ui_unlock();
+    lua_pushinteger(state, entry->id);
+    return 1;
+}
+
+static int l_image(lua_State *state) {
+    luaL_checktype(state, 1, LUA_TTABLE);
+    ui_context_t *context = get_context(state);
+    const char *src = read_string(state, 1, "src", NULL);
+    if (!src)
+        return luaL_error(state, "image src is required");
+    lv_obj_t *parent = read_parent(state, context, 1);
+    int x = read_integer(state, 1, "x", 0), y = read_integer(state, 1, "y", 0),
+        rotation = read_integer(state, 1, "rotation", 0),
+        scale = read_integer(state, 1, "scale", 256),
+        opacity = read_integer(state, 1, "opacity", 255);
+    int pivot_x = read_integer(state, 1, "pivot_x", 0),
+        pivot_y = read_integer(state, 1, "pivot_y", 0),
+        offset_x = read_integer(state, 1, "offset_x", 0),
+        offset_y = read_integer(state, 1, "offset_y", 0);
+    const char *event_id = read_string(state, 1, "event_id", NULL);
+    if (scale <= 0)
+        return luaL_argerror(state, 1, "scale must be positive");
+    if (opacity < 0 || opacity > 255)
+        return luaL_argerror(state, 1, "opacity must be between 0 and 255");
+    char *owned = strdup(src);
+    if (!owned)
+        return luaL_error(state, "image source allocation failed");
+    if (owned[0] == '/') {
+        size_t len = strlen(owned);
+        char *mapped = malloc(len + 3);
+        if (!mapped) {
+            free(owned);
+            return luaL_error(state, "image source allocation failed");
+        }
+        snprintf(mapped, len + 3, "L:%s", owned);
+        free(owned);
+        owned = mapped;
+    }
+    if (!ui_lock()) {
+        free(owned);
+        return luaL_error(state, "display lock failed");
+    }
+    register_native_fs();
+    lv_obj_t *object = lv_image_create(parent);
+    lv_image_set_src(object, owned);
+    lv_obj_set_pos(object, x, y);
+    lv_image_set_rotation(object, rotation * 10);
+    lv_image_set_scale(object, (uint32_t)scale);
+    lv_image_set_pivot(object, pivot_x, pivot_y);
+    lv_image_set_offset_x(object, offset_x);
+    lv_image_set_offset_y(object, offset_y);
+    lv_obj_set_style_opa(object, (lv_opa_t)opacity, 0);
+    ui_object_t *entry = add_object(context, object, UI_OBJECT_IMAGE, event_id);
+    if (!entry) {
+        lv_obj_delete(object);
+        free(owned);
+        ui_unlock();
+        return luaL_error(state, "ui object limit reached");
+    }
+    entry->owned_data = owned;
+    if (event_id)
+        add_touch_events(object, entry);
+    ui_unlock();
+    lua_pushinteger(state, entry->id);
+    return 1;
+}
+
 static int l_label(lua_State *state) {
     luaL_checktype(state, 1, LUA_TTABLE);
     ui_context_t *context = get_context(state);
@@ -398,11 +674,7 @@ static int l_update(lua_State *state) {
     int y = has_y ? (int)lua_tointeger(state, -1) : 0;
     lua_pop(state, 1);
     if (has_x || has_y) {
-        if (!has_x)
-            x = lv_obj_get_x(entry->object);
-        if (!has_y)
-            y = lv_obj_get_y(entry->object);
-        lv_obj_set_pos(entry->object, x, y);
+        /* Position reads are performed after taking the display lock below. */
     }
 
     lua_getfield(state, 2, "width");
@@ -424,17 +696,119 @@ static int l_update(lua_State *state) {
     bool hidden = has_hidden && lua_toboolean(state, -1);
     lua_pop(state, 1);
 
+    lua_getfield(state, 2, "opacity");
+    bool has_opacity = lua_isinteger(state, -1);
+    int opacity = has_opacity ? (int)lua_tointeger(state, -1) : 255;
+    lua_pop(state, 1);
+
+    lua_getfield(state, 2, "z");
+    bool has_z = lua_isinteger(state, -1);
+    int z = has_z ? (int)lua_tointeger(state, -1) : 0;
+    lua_pop(state, 1);
+
+    lua_getfield(state, 2, "src");
+    bool src_present = !lua_isnil(state, -1);
+    bool has_src = lua_isstring(state, -1);
+    const char *src = has_src ? lua_tostring(state, -1) : NULL;
+    lua_pop(state, 1);
+    if (src_present && (!has_src || entry->type != UI_OBJECT_IMAGE))
+        return luaL_error(state, "src must be a string and can only update an image");
+
+    lua_getfield(state, 2, "points");
+    bool has_points = !lua_isnil(state, -1);
+    lua_pop(state, 1);
+    lv_point_precise_t *points = NULL;
+    uint32_t point_count = 0;
+    if (has_points &&
+        (entry->type != UI_OBJECT_LINE || !parse_points(state, 2, &points, &point_count)))
+        return luaL_error(state,
+                          "points can only update a line and need at least two {x,y} entries");
+
+    int rotation = read_integer(state, 2, "rotation", 0);
+    lua_getfield(state, 2, "rotation");
+    bool has_rotation = lua_isinteger(state, -1);
+    lua_pop(state, 1);
+    int scale = read_integer(state, 2, "scale", 256);
+    lua_getfield(state, 2, "scale");
+    bool has_scale = lua_isinteger(state, -1);
+    lua_pop(state, 1);
+    int pivot_x = read_integer(state, 2, "pivot_x", 0),
+        pivot_y = read_integer(state, 2, "pivot_y", 0);
+    lua_getfield(state, 2, "pivot_x");
+    bool has_pivot_x = lua_isinteger(state, -1);
+    lua_pop(state, 1);
+    lua_getfield(state, 2, "pivot_y");
+    bool has_pivot_y = lua_isinteger(state, -1);
+    lua_pop(state, 1);
+    int offset_x = read_integer(state, 2, "offset_x", 0),
+        offset_y = read_integer(state, 2, "offset_y", 0);
+    lua_getfield(state, 2, "offset_x");
+    bool has_offset_x = lua_isinteger(state, -1);
+    lua_pop(state, 1);
+    lua_getfield(state, 2, "offset_y");
+    bool has_offset_y = lua_isinteger(state, -1);
+    lua_pop(state, 1);
+    int start_angle = read_integer(state, 2, "start_angle", 0),
+        end_angle = read_integer(state, 2, "end_angle", 360);
+    lua_getfield(state, 2, "start_angle");
+    bool has_start_angle = lua_isinteger(state, -1);
+    lua_pop(state, 1);
+    lua_getfield(state, 2, "end_angle");
+    bool has_end_angle = lua_isinteger(state, -1);
+    lua_pop(state, 1);
+    int line_width = read_integer(state, 2, "line_width", 1);
+    lua_getfield(state, 2, "line_width");
+    bool has_line_width = lua_isinteger(state, -1);
+    lua_pop(state, 1);
+
+    if ((has_rotation || has_scale || has_pivot_x || has_pivot_y || has_offset_x || has_offset_y) &&
+        entry->type != UI_OBJECT_IMAGE) {
+        free(points);
+        return luaL_error(state, "rotation, scale, pivot, and offset apply only to images");
+    }
+    if ((has_start_angle || has_end_angle) && entry->type != UI_OBJECT_ARC) {
+        free(points);
+        return luaL_error(state, "angle fields apply only to arcs");
+    }
+    if (has_line_width && entry->type != UI_OBJECT_ARC && entry->type != UI_OBJECT_LINE) {
+        free(points);
+        return luaL_error(state, "line_width applies only to arcs or lines");
+    }
+    if (has_opacity && (opacity < 0 || opacity > 255)) {
+        free(points);
+        return luaL_argerror(state, 2, "opacity must be between 0 and 255");
+    }
+    if (has_scale && scale <= 0) {
+        free(points);
+        return luaL_argerror(state, 2, "scale must be positive");
+    }
+    if (has_line_width && line_width <= 0) {
+        free(points);
+        return luaL_argerror(state, 2, "line_width must be positive");
+    }
+
     lua_getfield(state, 2, "text");
     bool has_text = !lua_isnil(state, -1);
     if (has_text && (entry->type != UI_OBJECT_LABEL || !lua_isstring(state, -1))) {
         lua_pop(state, 1);
+        free(points);
         return luaL_error(state, "text must be a string and can only update a label");
     }
     const char *text = has_text ? lua_tostring(state, -1) : NULL;
     lua_pop(state, 1);
 
-    if (!ui_lock())
+    if (!ui_lock()) {
+        free(points);
         return luaL_error(state, "display lock failed");
+    }
+
+    if (has_x || has_y) {
+        if (!has_x)
+            x = lv_obj_get_x(entry->object);
+        if (!has_y)
+            y = lv_obj_get_y(entry->object);
+        lv_obj_set_pos(entry->object, x, y);
+    }
 
     if (has_width || has_height) {
         if (!has_width)
@@ -447,6 +821,10 @@ static int l_update(lua_State *state) {
     if (has_color) {
         if (entry->type == UI_OBJECT_LABEL)
             lv_obj_set_style_text_color(entry->object, lv_color_hex(color), 0);
+        else if (entry->type == UI_OBJECT_LINE)
+            lv_obj_set_style_line_color(entry->object, lv_color_hex(color), 0);
+        else if (entry->type == UI_OBJECT_ARC)
+            lv_obj_set_style_arc_color(entry->object, lv_color_hex(color), LV_PART_INDICATOR);
         else
             lv_obj_set_style_bg_color(entry->object, lv_color_hex(color), 0);
     }
@@ -458,8 +836,76 @@ static int l_update(lua_State *state) {
             lv_obj_remove_flag(entry->object, LV_OBJ_FLAG_HIDDEN);
     }
 
+    if (has_opacity)
+        lv_obj_set_style_opa(entry->object, (lv_opa_t)opacity, 0);
+    if (has_z)
+        lv_obj_move_to_index(entry->object, z);
+    if (has_src) {
+        char *replacement = strdup(src);
+        if (!replacement) {
+            ui_unlock();
+            return luaL_error(state, "image source allocation failed");
+        }
+        if (replacement[0] == '/') {
+            size_t len = strlen(replacement);
+            char *mapped = malloc(len + 3);
+            if (!mapped) {
+                free(replacement);
+                ui_unlock();
+                return luaL_error(state, "image source allocation failed");
+            }
+            snprintf(mapped, len + 3, "L:%s", replacement);
+            free(replacement);
+            replacement = mapped;
+        }
+        lv_image_set_src(entry->object, replacement);
+        free_owned_data(entry);
+        entry->owned_data = replacement;
+    }
+
+    if (has_points) {
+        lv_line_set_points(entry->object, points, point_count);
+        free_owned_data(entry);
+        entry->owned_data = points;
+        points = NULL;
+    }
+    if (has_rotation || has_scale || has_pivot_x || has_pivot_y || has_offset_x || has_offset_y) {
+        if (has_rotation)
+            lv_image_set_rotation(entry->object, rotation * 10);
+        if (has_scale)
+            lv_image_set_scale(entry->object, (uint32_t)scale);
+        if (has_pivot_x || has_pivot_y) {
+            lv_point_t pivot;
+            lv_image_get_pivot(entry->object, &pivot);
+            if (!has_pivot_x)
+                pivot_x = pivot.x;
+            if (!has_pivot_y)
+                pivot_y = pivot.y;
+            lv_image_set_pivot(entry->object, pivot_x, pivot_y);
+        }
+        if (has_offset_x)
+            lv_image_set_offset_x(entry->object, offset_x);
+        if (has_offset_y)
+            lv_image_set_offset_y(entry->object, offset_y);
+    }
+    if (has_start_angle || has_end_angle || has_line_width) {
+        if (entry->type == UI_OBJECT_ARC) {
+            if (!has_start_angle)
+                start_angle = lv_arc_get_angle_start(entry->object);
+            if (!has_end_angle)
+                end_angle = lv_arc_get_angle_end(entry->object);
+            if (has_start_angle || has_end_angle)
+                lv_arc_set_angles(entry->object, start_angle, end_angle);
+            if (has_line_width)
+                lv_obj_set_style_arc_width(entry->object, line_width, LV_PART_INDICATOR);
+        } else if (entry->type == UI_OBJECT_LINE && has_line_width) {
+            lv_obj_set_style_line_width(entry->object, line_width, 0);
+        }
+    }
+
     if (has_text)
         lv_label_set_text(entry->object, text);
+    free(points);
     ui_unlock();
     return 0;
 }
@@ -484,8 +930,10 @@ static int l_delete(lua_State *state) {
     lv_obj_t *object = entry->object;
     for (size_t i = 0; i < UI_MAX_OBJECTS; ++i) {
         ui_object_t *candidate = &context->objects[i];
-        if (candidate->object && object_is_descendant(candidate->object, object))
+        if (candidate->object && object_is_descendant(candidate->object, object)) {
+            free_owned_data(candidate);
             candidate->object = NULL;
+        }
     }
     lv_obj_delete(object);
     ui_unlock();
@@ -541,6 +989,8 @@ static int close_context(lua_State *state) {
         return 0;
     context->closed = true;
     if (ui_lock()) {
+        for (size_t i = 0; i < UI_MAX_OBJECTS; ++i)
+            free_owned_data(&context->objects[i]);
         if (context->screen && lv_obj_is_valid(context->screen)) {
             if (lv_screen_active() == context->screen && context->previous_screen &&
                 lv_obj_is_valid(context->previous_screen)) {
@@ -560,17 +1010,30 @@ static int close_context(lua_State *state) {
 }
 
 int luaopen_ui(lua_State *state) {
+    if (ui_lock()) {
+        register_native_fs();
+        ui_unlock();
+    }
     if (luaL_newmetatable(state, UI_CONTEXT_METATABLE)) {
         lua_pushcfunction(state, close_context);
         lua_setfield(state, -2, "__gc");
     }
     lua_pop(state, 1);
     static const luaL_Reg functions[] = {
-        {"screen", l_screen},         {"screen_size", l_screen_size},
-        {"load", l_load},             {"rect", l_rect},
-        {"label", l_label},           {"button", l_button},
-        {"set_text", l_set_text},     {"update", l_update},
-        {"delete", l_delete},         {"poll_event", l_poll_event},
+        {"screen", l_screen},
+        {"screen_size", l_screen_size},
+        {"load", l_load},
+        {"rect", l_rect},
+        {"circle", l_circle},
+        {"line", l_line},
+        {"arc", l_arc},
+        {"image", l_image},
+        {"label", l_label},
+        {"button", l_button},
+        {"set_text", l_set_text},
+        {"update", l_update},
+        {"delete", l_delete},
+        {"poll_event", l_poll_event},
         {NULL, NULL},
     };
     luaL_newlib(state, functions);
