@@ -48,7 +48,6 @@ set(SOURCES "audio/audio_codec.cc"
             "display/screen/test_screen/test_screen.cc"
             "display/screen/test_screen/auto_test_screen.cc"
             "display/screen/test_screen/stress_test_screen.cc"
-            "display/screen/test_screen/stress_demo.c"
             "display/screen/test_screen/test_ui_common.cc"
             "display/screen/test_screen/vibrate_motor_test.cc"
             "display/screen/test_screen/audio_test.cc"
@@ -113,6 +112,8 @@ endfunction()
 set(BUILTIN_TEXT_FONT font_puhui_14_1)
 set(BUILTIN_ICON_FONT font_awesome_14_1)
 set(DESKTOP_APP_ICON_SIZE 128)
+set(BOOT_IMAGE_MAX_WIDTH 140)
+set(BOOT_IMAGE_MAX_HEIGHT 140)
 
 # Add board files according to BOARD_TYPE
 if(CONFIG_BOARD_TYPE_METALIO_CLAW_4)
@@ -467,8 +468,8 @@ else()
 endif()
 
 # SPNG is decoded a slice at a time and cannot be scaled by LVGL. Normalize
-# desktop icons before packaging so their encoded dimensions match the active
-# board's home-screen layout. Other image assets keep their source dimensions.
+# desktop icons and the boot image before packaging so their encoded dimensions
+# match the UI layout. Other image assets keep their source dimensions.
 idf_build_get_property(python PYTHON)
 set(PREPARED_RESOURCE_ASSETS_DIR "${CMAKE_BINARY_DIR}/prepared_xingzhi-assets")
 file(GLOB RESOURCE_ASSET_INPUTS CONFIGURE_DEPENDS
@@ -482,10 +483,13 @@ add_custom_target(prepare_resource_assets
             --icon-size "${DESKTOP_APP_ICON_SIZE}"
             --native-copy-glob "ic_app_home_theme*_theme.png"
             --native-copy-suffix "_preview"
+            --boot-image "ic_boot_image.png"
+            --boot-image-max-width "${BOOT_IMAGE_MAX_WIDTH}"
+            --boot-image-max-height "${BOOT_IMAGE_MAX_HEIGHT}"
     DEPENDS
         "${PROJECT_DIR}/scripts/spiffs_assets/prepare_spng_assets.py"
         ${RESOURCE_ASSET_INPUTS}
-    COMMENT "Preparing resolution-specific desktop icons for SPNG conversion"
+    COMMENT "Preparing resolution-specific images for SPNG conversion"
     VERBATIM)
 
 spiffs_create_partition_assets(
@@ -499,4 +503,31 @@ spiffs_create_partition_assets(
 ) 
 add_dependencies(assets_resources_bin prepare_resource_assets)
 
-spiffs_create_partition_image(factory_test ./factory-test-assets FLASH_IN_PROJECT DEPENDS)
+set(STRESS_ASSET_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/factory-test-assets")
+set(PREPARED_STRESS_ASSETS_DIR "${CMAKE_BINARY_DIR}/prepared_factory-test-assets")
+file(GLOB STRESS_ASSET_INPUTS CONFIGURE_DEPENDS
+    "${STRESS_ASSET_SOURCE_DIR}/stress_test.gif"
+    "${STRESS_ASSET_SOURCE_DIR}/stress_test_music.ogg")
+add_custom_target(prepare_stress_assets
+    COMMAND ${python}
+            "${PROJECT_DIR}/scripts/prepare_stress_assets.py"
+            --source "${STRESS_ASSET_SOURCE_DIR}"
+            --output "${PREPARED_STRESS_ASSETS_DIR}"
+            --max-width 480
+            --max-height 480
+            --max-fps 20
+            --gif-colors 128
+            --audio-bitrate 24k
+            --audio-rate 16000
+            --max-total-bytes 1150000
+    DEPENDS
+        "${PROJECT_DIR}/scripts/prepare_stress_assets.py"
+        ${STRESS_ASSET_INPUTS}
+    COMMENT "Preparing compressed GIF and music stress-test assets"
+    VERBATIM)
+
+spiffs_create_partition_image(
+    factory_test
+    "${PREPARED_STRESS_ASSETS_DIR}"
+    FLASH_IN_PROJECT)
+add_dependencies(spiffs_factory_test_bin prepare_stress_assets)

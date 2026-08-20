@@ -11,9 +11,23 @@ LvglGif::LvglGif(const lv_img_dsc_t* img_dsc)
         return;
     }
 
-    gif_ = gd_open_gif_data(img_dsc->data);
-    if (!gif_) {
-        ESP_LOGE(TAG, "Failed to open GIF from image descriptor");
+    Initialize(gd_open_gif_data(img_dsc->data));
+}
+
+LvglGif::LvglGif(const char* path)
+    : gif_(nullptr), timer_(nullptr), last_call_(0), playing_(false), loaded_(false) {
+    if (path == nullptr || path[0] == '\0') {
+        ESP_LOGE(TAG, "Invalid GIF path");
+        return;
+    }
+
+    Initialize(gd_open_gif_file(path));
+}
+
+void LvglGif::Initialize(gd_GIF* gif) {
+    gif_ = gif;
+    if (gif_ == nullptr) {
+        ESP_LOGE(TAG, "Failed to open GIF");
         return;
     }
 
@@ -34,13 +48,11 @@ LvglGif::LvglGif(const lv_img_dsc_t* img_dsc)
     }
 
     loaded_ = true;
-    ESP_LOGD(TAG, "GIF loaded from image descriptor: %dx%d", gif_->width, gif_->height);
+    ESP_LOGD(TAG, "GIF loaded: %dx%d", gif_->width, gif_->height);
 }
 
 // Destructor
-LvglGif::~LvglGif() {
-    Cleanup();
-}
+LvglGif::~LvglGif() { Cleanup(); }
 
 // LvglImage interface implementation
 const lv_img_dsc_t* LvglGif::image_dsc() const {
@@ -58,10 +70,12 @@ void LvglGif::Start() {
     }
 
     if (!timer_) {
-        timer_ = lv_timer_create([](lv_timer_t* timer) {
-            LvglGif* gif_obj = static_cast<LvglGif*>(lv_timer_get_user_data(timer));
-            gif_obj->NextFrame();
-        }, 10, this);
+        timer_ = lv_timer_create(
+            [](lv_timer_t* timer) {
+                LvglGif* gif_obj = static_cast<LvglGif*>(lv_timer_get_user_data(timer));
+                gif_obj->NextFrame();
+            },
+            10, this);
     }
 
     if (timer_) {
@@ -69,10 +83,10 @@ void LvglGif::Start() {
         last_call_ = lv_tick_get();
         lv_timer_resume(timer_);
         lv_timer_reset(timer_);
-        
+
         // Render first frame
         NextFrame();
-        
+
         ESP_LOGD(TAG, "GIF animation started");
     }
 }
@@ -111,13 +125,9 @@ void LvglGif::Stop() {
     }
 }
 
-bool LvglGif::IsPlaying() const {
-    return playing_;
-}
+bool LvglGif::IsPlaying() const { return playing_; }
 
-bool LvglGif::IsLoaded() const {
-    return loaded_;
-}
+bool LvglGif::IsLoaded() const { return loaded_; }
 
 int32_t LvglGif::GetLoopCount() const {
     if (!loaded_ || !gif_) {
@@ -148,9 +158,7 @@ uint16_t LvglGif::height() const {
     return gif_->height;
 }
 
-void LvglGif::SetFrameCallback(std::function<void()> callback) {
-    frame_callback_ = callback;
-}
+void LvglGif::SetFrameCallback(std::function<void()> callback) { frame_callback_ = callback; }
 
 void LvglGif::NextFrame() {
     if (!loaded_ || !gif_ || !playing_) {
@@ -179,7 +187,7 @@ void LvglGif::NextFrame() {
     // Render current frame
     if (gif_->canvas) {
         gd_render_frame(gif_, gif_->canvas);
-        
+
         // Call frame callback if set
         if (frame_callback_) {
             frame_callback_();
@@ -202,7 +210,7 @@ void LvglGif::Cleanup() {
 
     playing_ = false;
     loaded_ = false;
-    
+
     // Clear image descriptor
     memset(&img_dsc_, 0, sizeof(img_dsc_));
 }

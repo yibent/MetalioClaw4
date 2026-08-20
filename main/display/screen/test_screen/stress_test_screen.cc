@@ -4,22 +4,23 @@
 #include "application.h"
 #include "audio_codec.h"
 #include "board.h"
-#include "camera_screen/camera_screen.h"
-#include "esp_heap_caps.h"
+#include "display/lvgl_display/gif/lvgl_gif.h"
 #include "esp_log.h"
+#include "esp_partition.h"
 #include "esp_spiffs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "stress_demo.h"
 #include "pwr_key_handler.h"
 #include "screen_util.h"
 #include "test_screen.h"
 #include "test_ui_common.h"
-#include "vibrate_motor_test.h"
 
+#include <cerrno>
+#include <sys/stat.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "esp_audio_simple_player.h"
@@ -38,21 +39,11 @@ namespace {
 
 constexpr const char* TAG = "StressTestScreen";
 constexpr const char* kFactoryTestMount = "/factory_test";
-constexpr const char* kBgMusicUri =
-    "file://factory_test/factory_test_audio.mp3";
-
-constexpr uint32_t kLvglMusicDurationMs = 5 * 60 * 1000;
-constexpr uint32_t kMotorDurationMs = 30 * 1000;
-constexpr uint32_t kCameraDurationMs = 30 * 1000;
-static_assert(kLvglMusicDurationMs + kMotorDurationMs + kCameraDurationMs ==
-                  6 * 60 * 1000,
-              "stress cycle must be 6 minutes");
-
-enum class StressPhase {
-    LvglAndMusic,
-    MotorVibrate,
-    CameraPreview,
-};
+constexpr const char* kGifPath = "S:/factory_test/stress_test.gif";
+constexpr const char* kGifFilePath = "/factory_test/stress_test.gif";
+constexpr const char* kBgMusicUri = "file://factory_test/stress_test_music.mp3";
+constexpr const char* kBgMusicFilePath = "/factory_test/stress_test_music.mp3";
+constexpr size_t kFactoryTestPartitionSize = 1408 * 1024;
 
 lv_obj_t* s_screen = nullptr;
 lv_obj_t* s_setup_panel = nullptr;
@@ -66,14 +57,12 @@ bool s_factory_test_mounted = false;
 AudioCodec* s_audio_codec = nullptr;
 std::vector<int16_t> s_bgm_pcm_buf;
 
-StressPhase s_phase = StressPhase::LvglAndMusic;
-lv_timer_t* s_cycle_timer = nullptr;
-bool s_cycle_running = false;
-lv_obj_t* s_cam_overlay = nullptr;
-lv_obj_t* s_cam_canvas = nullptr;
-bool s_cam_preview_active = false;
+std::unique_ptr<LvglGif> s_gif_controller;
+lv_obj_t* s_gif_image = nullptr;
+bool s_playback_running = false;
+bool s_system_audio_suspended = false;
 
-void StartStressCycle();
+bool StartStressCycle();
 void StopStressCycle();
 
 int ReadStressVolume() {
@@ -115,23 +104,23 @@ void OnVolumeSliderChanged(lv_event_t* e) {
 }
 
 void OnSwipeBackToMenu() {
-    if (s_cycle_running) {
-        return;
+    if (s_playback_running) {
+        StopStressCycle();
     }
     TestUiNavigateTo(TestScreen::Create);
 }
 
-void OnBackBtnClicked(lv_event_t* /*e*/) {
-    OnSwipeBackToMenu();
-}
+void OnBackBtnClicked(lv_event_t* /*e*/) { OnSwipeBackToMenu(); }
 
 void OnStartStressClicked(lv_event_t* /*e*/) {
-    if (s_cycle_running || s_setup_panel == nullptr) {
+    if (s_playback_running || s_setup_panel == nullptr) {
         return;
     }
 
     lv_obj_add_flag(s_setup_panel, LV_OBJ_FLAG_HIDDEN);
-    StartStressCycle();
+    if (!StartStressCycle()) {
+        lv_obj_clear_flag(s_setup_panel, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void BuildSetupPanel(lv_obj_t* scr) {
@@ -139,8 +128,7 @@ void BuildSetupPanel(lv_obj_t* scr) {
     screen_strip_obj_chrome(s_setup_panel);
     lv_obj_set_size(s_setup_panel, kTestPanelW, kTestPanelH);
     lv_obj_set_pos(s_setup_panel, 0, 0);
-    lv_obj_set_style_bg_color(s_setup_panel, lv_color_hex(kTestColorBg),
-                             LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_setup_panel, lv_color_hex(kTestColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_setup_panel, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(s_setup_panel, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -169,8 +157,7 @@ void BuildSetupPanel(lv_obj_t* scr) {
 
     lv_obj_t* hint = lv_label_create(card);
     lv_label_set_text(hint, I18n::T("背景音乐音量"));
-    lv_obj_set_style_text_color(hint, lv_color_hex(kTestColorTextDim),
-                                LV_PART_MAIN);
+    lv_obj_set_style_text_color(hint, lv_color_hex(kTestColorTextDim), LV_PART_MAIN);
     lv_obj_set_style_text_font(hint, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -20);
 
@@ -198,14 +185,12 @@ void BuildSetupPanel(lv_obj_t* scr) {
     lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
     lv_obj_set_style_radius(slider, 10, LV_PART_MAIN);
     lv_obj_set_style_radius(slider, 10, LV_PART_INDICATOR);
-    lv_obj_add_event_cb(slider, OnVolumeSliderChanged, LV_EVENT_VALUE_CHANGED,
-                        nullptr);
+    lv_obj_add_event_cb(slider, OnVolumeSliderChanged, LV_EVENT_VALUE_CHANGED, nullptr);
     screen_swipe_back_ignore(slider, true);
 
     lv_obj_t* range = lv_label_create(s_setup_panel);
     lv_label_set_text(range, "0% ~ 100%");
-    lv_obj_set_style_text_color(range, lv_color_hex(kTestColorTextDim),
-                                LV_PART_MAIN);
+    lv_obj_set_style_text_color(range, lv_color_hex(kTestColorTextDim), LV_PART_MAIN);
     lv_obj_set_style_text_font(range, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_align(range, LV_ALIGN_TOP_MID, 0, kTestHeaderH + 24 + 220 + 20 + 56);
 
@@ -224,11 +209,10 @@ void BuildSetupPanel(lv_obj_t* scr) {
     lv_obj_center(start_lbl);
 
     lv_obj_t* foot = lv_label_create(s_setup_panel);
-    lv_label_set_text(foot, I18n::T("6 分钟循环：LVGL 压测 + 背景音乐 → 马达 → 摄像头"));
+    lv_label_set_text(foot, I18n::T("循环播放 GIF 动画和自定义音乐"));
     lv_obj_set_width(foot, kTestPanelW - 2 * kTestSideMargin);
     lv_label_set_long_mode(foot, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_color(foot, lv_color_hex(kTestColorTextDim),
-                                LV_PART_MAIN);
+    lv_obj_set_style_text_color(foot, lv_color_hex(kTestColorTextDim), LV_PART_MAIN);
     lv_obj_set_style_text_font(foot, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_set_style_text_align(foot, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align(foot, LV_ALIGN_BOTTOM_MID, 0, -132);
@@ -259,8 +243,7 @@ extern "C" int BgMusicOutCallback(uint8_t* data, int data_size, void* ctx) {
 
 extern "C" int BgMusicPrevCallback(esp_asp_handle_t* handle, void* ctx) {
 #ifdef CONFIG_ESP_AUDIO_SIMPLE_PLAYER_RESAMPLE_EN
-    const esp_asp_handle_t player =
-        reinterpret_cast<esp_asp_handle_t>(handle);
+    const esp_asp_handle_t player = reinterpret_cast<esp_asp_handle_t>(handle);
     if (player == nullptr) {
         return 0;
     }
@@ -272,12 +255,10 @@ extern "C" int BgMusicPrevCallback(esp_asp_handle_t* handle, void* ctx) {
 
     esp_gmf_pipeline_handle_t pipe = nullptr;
     esp_gmf_element_handle_t rate_el = nullptr;
-    if (esp_audio_simple_player_get_pipeline(player, &pipe) != ESP_GMF_ERR_OK ||
-        pipe == nullptr) {
+    if (esp_audio_simple_player_get_pipeline(player, &pipe) != ESP_GMF_ERR_OK || pipe == nullptr) {
         return 0;
     }
-    if (esp_gmf_pipeline_get_el_by_name(pipe, "aud_rate_cvt", &rate_el) !=
-            ESP_GMF_ERR_OK ||
+    if (esp_gmf_pipeline_get_el_by_name(pipe, "aud_rate_cvt", &rate_el) != ESP_GMF_ERR_OK ||
         rate_el == nullptr) {
         return 0;
     }
@@ -301,14 +282,75 @@ bool MountFactoryTestPartition() {
 
     const esp_err_t err = esp_vfs_spiffs_register(&conf);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "mount factory_test spiffs failed: %s",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "mount factory_test spiffs failed: %s", esp_err_to_name(err));
         return false;
     }
 
     s_factory_test_mounted = true;
     ESP_LOGI(TAG, "factory_test spiffs mounted at %s", kFactoryTestMount);
     return true;
+}
+
+bool ValidateStressAsset(const char* name, const char* path) {
+    struct stat file_info = {};
+    // ESP-IDF's SPIFFS VFS implements stat/open but not access().
+    if (stat(path, &file_info) != 0) {
+        const int stat_errno = errno;
+        ESP_LOGE(TAG, "%s unavailable: %s (errno=%d: %s)", name, path, stat_errno,
+                 std::strerror(stat_errno));
+        return false;
+    }
+    if (!S_ISREG(file_info.st_mode)) {
+        ESP_LOGE(TAG, "%s is not a regular file: %s", name, path);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "%s ready: %s (%lu bytes)", name, path,
+             static_cast<unsigned long>(file_info.st_size));
+    return true;
+}
+
+bool ValidateStressAssets() {
+    bool ready = true;
+    const esp_partition_t* partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "factory_test");
+    if (partition == nullptr) {
+        ESP_LOGE(TAG, "factory_test partition not found in partition table");
+        ready = false;
+    } else {
+        ESP_LOGI(TAG, "factory_test partition: offset=0x%08lx, size=%lu bytes",
+                 static_cast<unsigned long>(partition->address),
+                 static_cast<unsigned long>(partition->size));
+        if (partition->size < kFactoryTestPartitionSize) {
+            ESP_LOGE(TAG,
+                     "factory_test partition is too small (%lu < %lu bytes); "
+                     "flash the updated partition table and factory_test image",
+                     static_cast<unsigned long>(partition->size),
+                     static_cast<unsigned long>(kFactoryTestPartitionSize));
+            ready = false;
+        }
+    }
+
+    size_t total = 0;
+    size_t used = 0;
+    const esp_err_t info_err = esp_spiffs_info("factory_test", &total, &used);
+    if (info_err == ESP_OK) {
+        ESP_LOGI(TAG, "factory_test SPIFFS: used=%lu, total=%lu bytes",
+                 static_cast<unsigned long>(used), static_cast<unsigned long>(total));
+    } else {
+        ESP_LOGW(TAG, "read factory_test SPIFFS info failed: %s",
+                 esp_err_to_name(info_err));
+    }
+
+    const bool gif_ready = ValidateStressAsset("stress GIF", kGifFilePath);
+    const bool music_ready = ValidateStressAsset("stress music", kBgMusicFilePath);
+    ready = ready && gif_ready && music_ready;
+    if (!ready) {
+        ESP_LOGE(TAG,
+                 "stress-test assets are unavailable; run a full 'idf.py flash' "
+                 "instead of app-only flashing");
+    }
+    return ready;
 }
 
 void UnmountFactoryTestPartition() {
@@ -378,35 +420,6 @@ void WaitBgMusicTaskStopped() {
     }
 }
 
-void ShutdownBgMusicSession();
-
-void InitBgMusicSession() {
-    ShutdownBgMusicSession();
-
-    s_audio_codec = Board::GetInstance().GetAudioCodec();
-    if (s_audio_codec == nullptr) {
-        ESP_LOGW(TAG, "no audio codec, skip bg music");
-        return;
-    }
-
-    if (!MountFactoryTestPartition()) {
-        s_audio_codec = nullptr;
-        return;
-    }
-
-    s_bg_music_shutdown = false;
-    s_bg_music_playing = false;
-
-    const BaseType_t ok = xTaskCreate(BgMusicTask, "stress_bgm", 8192, nullptr,
-                                      5, &s_bg_music_task);
-    if (ok != pdPASS) {
-        ESP_LOGE(TAG, "create bg music task failed");
-        UnmountFactoryTestPartition();
-        s_audio_codec = nullptr;
-        s_bg_music_task = nullptr;
-    }
-}
-
 void ShutdownBgMusicSession() {
     s_bg_music_playing = false;
     s_bg_music_shutdown = true;
@@ -416,224 +429,119 @@ void ShutdownBgMusicSession() {
     }
 
     WaitBgMusicTaskStopped();
-    UnmountFactoryTestPartition();
     s_audio_codec = nullptr;
 }
 
-void StartBgMusicForPhase() {
+bool InitBgMusicSession() {
+    ShutdownBgMusicSession();
+
+    s_audio_codec = Board::GetInstance().GetAudioCodec();
+    if (s_audio_codec == nullptr) {
+        ESP_LOGE(TAG, "no audio codec for stress music");
+        return false;
+    }
+
+    s_bg_music_shutdown = false;
+    s_bg_music_playing = false;
+
+    const BaseType_t ok =
+        xTaskCreate(BgMusicTask, "stress_bgm", 8192, nullptr, 5, &s_bg_music_task);
+    if (ok != pdPASS) {
+        ESP_LOGE(TAG, "create bg music task failed");
+        s_audio_codec = nullptr;
+        s_bg_music_task = nullptr;
+        return false;
+    }
+    return true;
+}
+
+void StartBgMusic() {
     if (s_bg_music_task == nullptr) {
         return;
     }
     s_bg_music_playing = true;
 }
 
-void PauseBgMusicForPhase() {
-    s_bg_music_playing = false;
-    if (s_bg_player != nullptr) {
-        esp_audio_simple_player_stop(s_bg_player);
+void StopGif() {
+    if (s_gif_image != nullptr) {
+        lv_image_set_src(s_gif_image, nullptr);
+        lv_obj_delete(s_gif_image);
+        s_gif_image = nullptr;
     }
+    s_gif_controller.reset();
 }
 
-void CleanupStressDemoWidgets() {
-    if (s_screen == nullptr || s_setup_panel == nullptr) {
-        return;
+bool StartGif() {
+    s_gif_controller = std::make_unique<LvglGif>(kGifPath);
+    if (!s_gif_controller->IsLoaded()) {
+        ESP_LOGE(TAG, "failed to load stress GIF: %s", kGifPath);
+        s_gif_controller.reset();
+        return false;
     }
+    s_gif_controller->SetLoopCount(0);
 
-    // The stress widgets are siblings of s_setup_panel under the native
-    // screen root. Clean that owner while preserving the setup panel and its
-    // navigation hooks.
-    lv_obj_t* owner = lv_obj_get_parent(s_setup_panel);
-    if (owner == nullptr) {
-        return;
-    }
-
-    uint32_t i = 0;
-    while (i < lv_obj_get_child_count(owner)) {
-        lv_obj_t* child = lv_obj_get_child(owner, i);
-        if (child == s_setup_panel) {
-            ++i;
-            continue;
+    s_gif_image = lv_image_create(s_screen);
+    lv_obj_set_size(s_gif_image, s_gif_controller->width(), s_gif_controller->height());
+    lv_image_set_src(s_gif_image, s_gif_controller->image_dsc());
+    const uint32_t scale_x =
+        static_cast<uint32_t>(kTestPanelW) * 256 / std::max<uint16_t>(1, s_gif_controller->width());
+    const uint32_t scale_y = static_cast<uint32_t>(kTestPanelH) * 256 /
+                             std::max<uint16_t>(1, s_gif_controller->height());
+    lv_image_set_scale(s_gif_image, std::min(scale_x, scale_y));
+    lv_obj_center(s_gif_image);
+    screen_make_input_passive(s_gif_image);
+    s_gif_controller->SetFrameCallback([]() {
+        if (s_gif_image != nullptr) {
+            lv_obj_invalidate(s_gif_image);
         }
-        lv_obj_delete(child);
+    });
+    s_gif_controller->Start();
+    return true;
+}
+
+void StopStressCycle() {
+    s_playback_running = false;
+    StopGif();
+    ShutdownBgMusicSession();
+    UnmountFactoryTestPartition();
+    Application::GetInstance().GetAudioService().SetExternalPlaybackActive(false);
+    if (s_system_audio_suspended) {
+        auto& app = Application::GetInstance();
+        app.SetActivationSuspended(false);
+        app.RestoreSystemAudioAfterStressTest();
+        s_system_audio_suspended = false;
     }
 }
 
-void LogHeapFree(const char* where) {
-    const size_t internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    const size_t spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    ESP_LOGI(TAG, "%s: free internal=%lu spiram=%lu", where,
-             static_cast<unsigned long>(internal),
-             static_cast<unsigned long>(spiram));
-}
-
-void StopCameraPreview() {
-    if (s_cam_preview_active) {
-        CameraScreen::StopExternalPreview();
-        s_cam_preview_active = false;
-    }
-
-    if (s_cam_canvas != nullptr) {
-        lv_obj_delete(s_cam_canvas);
-        s_cam_canvas = nullptr;
-    }
-    if (s_cam_overlay != nullptr) {
-        lv_obj_delete(s_cam_overlay);
-        s_cam_overlay = nullptr;
-    }
-}
-
-void StartCameraPreview() {
-    StopCameraPreview();
-
-    CameraScreen::PreviewBuffer preview_buf = {};
-    if (!CameraScreen::PreparePreviewBuffer(&preview_buf)) {
-        ESP_LOGE(TAG, "prepare preview buffer failed");
-        return;
-    }
-
-    s_cam_overlay = lv_obj_create(lv_layer_top());
-    screen_strip_obj_chrome(s_cam_overlay);
-    lv_obj_set_size(s_cam_overlay, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(s_cam_overlay, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_cam_overlay, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(s_cam_overlay, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(s_cam_overlay, 0, LV_PART_MAIN);
-    lv_obj_remove_flag(s_cam_overlay, LV_OBJ_FLAG_SCROLLABLE);
-
-    s_cam_canvas = lv_canvas_create(s_cam_overlay);
-    lv_canvas_set_buffer(s_cam_canvas, preview_buf.data, preview_buf.width,
-                         preview_buf.height, LV_COLOR_FORMAT_RGB888);
-    // The stress preview lives on lv_layer_top() and is already outside the
-    // test screen tree. Keep the camera buffer in its native panel layout and
-    // scale only when the prepared buffer is larger than the physical panel.
-    lv_obj_set_size(s_cam_canvas, preview_buf.width, preview_buf.height);
-    const uint32_t scale_x = static_cast<uint32_t>(LV_HOR_RES) * 256 /
-                             std::max(1, preview_buf.width);
-    const uint32_t scale_y = static_cast<uint32_t>(LV_VER_RES) * 256 /
-                             std::max(1, preview_buf.height);
-    const uint32_t scale = std::min(scale_x, scale_y);
-    const int32_t rendered_w = preview_buf.width * static_cast<int32_t>(scale) / 256;
-    const int32_t rendered_h = preview_buf.height * static_cast<int32_t>(scale) / 256;
-    lv_obj_set_style_transform_pivot_x(s_cam_canvas, 0, LV_PART_MAIN);
-    lv_obj_set_style_transform_pivot_y(s_cam_canvas, 0, LV_PART_MAIN);
-    lv_obj_set_style_transform_scale(s_cam_canvas, scale, LV_PART_MAIN);
-    lv_obj_set_pos(s_cam_canvas, (LV_HOR_RES - rendered_w) / 2,
-                   (LV_VER_RES - rendered_h) / 2);
-    screen_make_input_passive(s_cam_canvas);
-
-    if (CameraScreen::StartExternalPreview(s_cam_canvas) != ESP_OK) {
-        ESP_LOGE(TAG, "start fullscreen preview failed");
-        StopCameraPreview();
-        return;
-    }
-
-    s_cam_preview_active = true;
-    ESP_LOGI(TAG, "camera preview started (%dx%d)", preview_buf.width,
-             preview_buf.height);
-}
-
-void StopCycleTimer() {
-    if (s_cycle_timer != nullptr) {
-        lv_timer_delete(s_cycle_timer);
-        s_cycle_timer = nullptr;
-    }
-}
-
-void SchedulePhaseTimer(uint32_t duration_ms);
-
-void EnterPhase(StressPhase phase);
-
-void OnCycleTimer(lv_timer_t* /*timer*/) {
-    s_cycle_timer = nullptr;
-    if (!s_cycle_running) {
-        return;
-    }
-
-    switch (s_phase) {
-    case StressPhase::LvglAndMusic:
-        EnterPhase(StressPhase::MotorVibrate);
-        break;
-    case StressPhase::MotorVibrate:
-        EnterPhase(StressPhase::CameraPreview);
-        break;
-    case StressPhase::CameraPreview:
-        EnterPhase(StressPhase::LvglAndMusic);
-        break;
-    }
-}
-
-void SchedulePhaseTimer(uint32_t duration_ms) {
-    StopCycleTimer();
-    s_cycle_timer = lv_timer_create(OnCycleTimer, duration_ms, nullptr);
-    lv_timer_set_repeat_count(s_cycle_timer, 1);
-}
-
-void EnterPhase(StressPhase phase) {
-    stress_demo_stop();
-    CleanupStressDemoWidgets();
-    PauseBgMusicForPhase();
-    VibrateMotorTest::StopMotor();
-    StopCameraPreview();
-
-    s_phase = phase;
-
-    uint32_t duration_ms = 0;
-    switch (phase) {
-    case StressPhase::LvglAndMusic:
-        ESP_LOGI(TAG, "phase: LVGL stress + bg music (%lus)",
-                 static_cast<unsigned long>(kLvglMusicDurationMs / 1000));
-        stress_demo_start();
-        StartBgMusicForPhase();
-        duration_ms = kLvglMusicDurationMs;
-        break;
-    case StressPhase::MotorVibrate:
-        ESP_LOGI(TAG, "phase: motor vibrate (%lus)",
-                 static_cast<unsigned long>(kMotorDurationMs / 1000));
-        VibrateMotorTest::StartMotor();
-        duration_ms = kMotorDurationMs;
-        break;
-    case StressPhase::CameraPreview:
-        ESP_LOGI(TAG, "phase: camera preview (%lus)",
-                 static_cast<unsigned long>(kCameraDurationMs / 1000));
-        StartCameraPreview();
-        duration_ms = kCameraDurationMs;
-        break;
-    }
-
-    if (s_cycle_running) {
-        SchedulePhaseTimer(duration_ms);
-    }
-
-    LogHeapFree("phase entered");
-}
-
-void StartStressCycle() {
+bool StartStressCycle() {
     StopStressCycle();
+    if (!MountFactoryTestPartition()) {
+        return false;
+    }
+    if (!ValidateStressAssets()) {
+        UnmountFactoryTestPartition();
+        return false;
+    }
 
     auto& app = Application::GetInstance();
     app.SetActivationSuspended(true);
     app.StopSystemAudioForStressTest();
+    app.GetAudioService().SetExternalPlaybackActive(true);
+    s_system_audio_suspended = true;
 
-    VibrateMotorTest::OnLoad();
-    InitBgMusicSession();
+    if (!StartGif()) {
+        StopStressCycle();
+        return false;
+    }
 
-    s_cycle_running = true;
-    EnterPhase(StressPhase::LvglAndMusic);
-}
-
-void StopStressCycle() {
-    s_cycle_running = false;
-    StopCycleTimer();
-    stress_demo_stop();
-    CleanupStressDemoWidgets();
-    ShutdownBgMusicSession();
-    VibrateMotorTest::StopMotor();
-    VibrateMotorTest::OnUnload();
-    StopCameraPreview();
-    auto& app = Application::GetInstance();
-    app.SetActivationSuspended(false);
-    app.RestoreSystemAudioAfterStressTest();
-    LogHeapFree("stress cycle stopped");
+    if (!InitBgMusicSession()) {
+        StopStressCycle();
+        return false;
+    }
+    s_playback_running = true;
+    StartBgMusic();
+    ESP_LOGI(TAG, "stress GIF and music playback started");
+    return true;
 }
 
 void OnScreenUnloaded(lv_event_t* /*e*/) {
@@ -655,9 +563,7 @@ lv_obj_t* StressTestScreen::Create() {
     lv_obj_t* scr = lv_obj_create(nullptr);
     s_screen = scr;
     screen_strip_obj_chrome(scr);
-    // The setup UI and the stress widgets use the active panel coordinate
-    // space. The camera phase is a separate lv_layer_top() overlay and also
-    // remains native-sized.
+    // Keep setup controls and GIF playback in the panel's native coordinates.
     lv_obj_set_size(scr, kTestPanelW, kTestPanelH);
     lv_obj_set_style_bg_color(scr, lv_color_hex(kTestColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
@@ -668,8 +574,7 @@ lv_obj_t* StressTestScreen::Create() {
     screen_mark_native_layout(scr);
     screen_attach_lifecycle(scr, stress_test_lifecycle_cb);
     screen_attach_swipe_back(scr, OnSwipeBackToMenu);
-    lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED,
-                        nullptr);
+    lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
 
     return scr;
 }

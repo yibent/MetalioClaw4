@@ -135,6 +135,24 @@ void AudioService::Stop() {
     audio_queue_cv_.notify_all();
 }
 
+void AudioService::SetExternalPlaybackActive(bool active) {
+    external_playback_active_.store(active, std::memory_order_release);
+
+    if (active) {
+        if (codec_ != nullptr && !codec_->output_enabled()) {
+            codec_->EnableOutput(true);
+        }
+        return;
+    }
+
+    // The power timer may have stopped itself after both codec directions were
+    // idle. Restart it when the external owner releases the output path.
+    if (audio_power_timer_ != nullptr && !service_stopped_) {
+        esp_timer_stop(audio_power_timer_);
+        esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+    }
+}
+
 bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples) {
     if (!codec_->input_enabled()) {
         esp_timer_stop(audio_power_timer_);
@@ -786,16 +804,24 @@ void AudioService::ResetDecoder() {
 }
 
 void AudioService::CheckAndUpdateAudioPowerState() {
+    const bool external_playback_active =
+        external_playback_active_.load(std::memory_order_acquire);
+    if (external_playback_active && codec_ != nullptr && !codec_->output_enabled()) {
+        codec_->EnableOutput(true);
+    }
+
     auto now = std::chrono::steady_clock::now();
     auto input_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_input_time_).count();
     auto output_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_output_time_).count();
     if (input_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->input_enabled()) {
         codec_->EnableInput(false);
     }
-    if (output_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->output_enabled()) {
+    if (output_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->output_enabled() &&
+        !external_playback_active_.load(std::memory_order_acquire)) {
         codec_->EnableOutput(false);
     }
-    if (!codec_->input_enabled() && !codec_->output_enabled()) {
+    if (!codec_->input_enabled() && !codec_->output_enabled() &&
+        !external_playback_active_.load(std::memory_order_acquire)) {
         esp_timer_stop(audio_power_timer_);
     }
 }

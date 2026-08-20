@@ -4,7 +4,7 @@
 
 class BootScreen {
 public:
-    // Create a fullscreen "boot" page (black background with text).
+    // Create a fullscreen boot page with a centered image on a white background.
     // Returns the created LVGL screen object (parent = NULL).
     static lv_obj_t* Create();
 };

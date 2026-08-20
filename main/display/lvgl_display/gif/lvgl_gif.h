@@ -1,10 +1,10 @@
 #pragma once
 
+#include <lvgl.h>
+#include <functional>
+#include <memory>
 #include "../lvgl_image.h"
 #include "gifdec.h"
-#include <lvgl.h>
-#include <memory>
-#include <functional>
 
 /**
  * C++ implementation of LVGL GIF widget
@@ -13,6 +13,7 @@
 class LvglGif {
 public:
     explicit LvglGif(const lv_img_dsc_t* img_dsc);
+    explicit LvglGif(const char* path);
     virtual ~LvglGif();
 
     // LvglImage interface implementation
@@ -72,30 +73,32 @@ public:
 private:
     // GIF decoder instance
     gd_GIF* gif_;
-    
+
     // LVGL image descriptor
     lv_img_dsc_t img_dsc_;
-    
+
     // Animation timer
     lv_timer_t* timer_;
-    
+
     // Last frame update time
     uint32_t last_call_;
-    
+
     // Animation state
     bool playing_;
     bool loaded_;
-    
+
     // Frame update callback
     std::function<void()> frame_callback_;
-    
+
     /**
      * Update to next frame
      */
     void NextFrame();
-    
+
     /**
      * Cleanup resources
      */
     void Cleanup();
+
+    void Initialize(gd_GIF* gif);
 };
