@@ -16,10 +16,11 @@
 
 #include "application.h"
 #include "board.h"
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 #include "dual_network_board.h"
 #include "nt26_board.h"
+#endif
 #include "IOExpander.hpp"
-#include "bq27220_gauge.h"
 #include "settings.h"
 #include "settings_screen/settings_screen.h"
 #include "calculator_screen/calculator_screen.h"
@@ -35,8 +36,6 @@
 #include "idle_power_policy.h"
 #include "weather_screen/weather_screen.h"
 #include "network_screen/network_screen.h"
-#include "pin_test_screen/pin_test_screen.h"
-#include "test_screen/test_screen.h"
 #include "sd_card_screen/sd_card_screen.h"
 #include "info_screen/info_screen.h"
 #include "wifi_required_dialog.h"
@@ -143,28 +142,6 @@ void sd_card_lifecycle_cb(screen_lifecycle_event_t event) {
         ESP_LOGI(TAG_HOME, "unload: sd_card_screen");
     }
     SdCardScreen::LifecycleCallback(event);
-}
-
-// 引脚测试生命周期：屏幕自身会在 UNLOAD 时清掉输入轮询 / 周期方波 timer，
-// 这里只多兜底一次以及打 log。
-void pin_test_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("pin_test", event);
-    if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG_HOME, "load: pin_test_screen");
-    } else {
-        ESP_LOGI(TAG_HOME, "unload: pin_test_screen");
-    }
-    PinTestScreen::LifecycleCallback(event);
-}
-
-void test_lifecycle_cb(screen_lifecycle_event_t event) {
-    PwrKey_OnScreenLifecycle("test", event);
-    if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG_HOME, "load: test_screen");
-    } else {
-        ESP_LOGI(TAG_HOME, "unload: test_screen");
-    }
-    TestScreen::LifecycleCallback(event);
 }
 
 // OpenClaw 生命周期：转发给 OpenClawScreen::LifecycleCallback，让屏幕
@@ -398,20 +375,6 @@ void LaunchSdCard(screen_lifecycle_cb_t lifecycle_cb) {
     }
 }
 
-void LaunchPinTest(screen_lifecycle_cb_t lifecycle_cb) {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* app = PinTestScreen::Create();
-    screen_attach_lifecycle(app, lifecycle_cb);
-    lv_screen_load(app);
-    if (old_scr != nullptr && old_scr != app) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
-void LaunchTest(screen_lifecycle_cb_t lifecycle_cb) {
-    TestScreen::LaunchFromHome(lifecycle_cb);
-}
-
 void LaunchOpenClaw(screen_lifecycle_cb_t lifecycle_cb) {
     lv_obj_t* old_scr = lv_screen_active();
     OpenClawScreen::SetLifecycleCallback(lifecycle_cb);
@@ -495,10 +458,8 @@ constexpr AppEntry kApps[] = {
     {"calculator",     "计算器",   LaunchCalculator,    calculator_lifecycle_cb,    false},
     {"weather",        "天气",     LaunchWeather,       weather_lifecycle_cb,       true},
     {"sd",             "SD卡",     LaunchSdCard,        sd_card_lifecycle_cb,       false},
-    {"pin",            "引脚测试", LaunchPinTest,       pin_test_lifecycle_cb,      false},
     {"2048",           "2048",     LaunchGame2048,      game_2048_lifecycle_cb,     false},
     {"info",           "系统信息", LaunchInfo,          info_lifecycle_cb,          false},
-    {"test",           "测试",     LaunchTest,          test_lifecycle_cb,          false},
     {"settings",       "设置",     LaunchSettings,      settings_lifecycle_cb,      false},
     {"ai_image_gen",   "AI生图",   LaunchAiImageGen,    ai_image_gen_lifecycle_cb,  true},
     {"translate",      "翻译",     LaunchTranslate,     translate_lifecycle_cb,     true},
@@ -779,7 +740,9 @@ struct HomeStatusState {
     lv_obj_t* bar = nullptr;
     lv_obj_t* network_icon_lbl = nullptr;
     lv_obj_t* network_type_lbl = nullptr;
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     lv_obj_t* sim_slot_lbl = nullptr;       // 仅 4G 模式下显示：外置卡 / 内置卡
+#endif
     lv_obj_t* battery_icon_lbl = nullptr;   // 电池图标（Font Awesome 字形）
     lv_obj_t* battery_pct_lbl  = nullptr;   // 电池电量文字，例如 I18n::T("电量 85%")
     lv_obj_t* time_lbl = nullptr;
@@ -789,8 +752,10 @@ struct HomeStatusState {
     const char* last_battery_icon = nullptr; // 缓存上次图标，避免重复 set_text
     int  last_battery_pct = -1;
     bool last_battery_low = false;  // 缓存上一次的低电量染色状态
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     int  last_net_type = -1;        // 缓存上次显示的网络类型，避免每秒重绘 SIM 标签
     int  last_sim_slot = -1;        // 缓存上次显示的 SIM 槽位
+#endif
     std::string last_activation_text;  // 缓存验证码文案，避免每秒 invalidate
     bool last_activation_visible = false;
 };
@@ -858,6 +823,7 @@ void SetPagerSkeletonMode(PagerState* state, bool active) {
 void UpdateHomeStatusBar(HomeStatusState* st);
 
 int GetSavedNetworkType() {
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     // 非双网板没有蜂窝模组，即使 NVS 中残留旧的 4G 选择也必须按 Wi-Fi 处理。
     if (dynamic_cast<DualNetworkBoard*>(&Board::GetInstance()) == nullptr) {
         return 0;
@@ -867,9 +833,13 @@ int GetSavedNetworkType() {
     constexpr int kDefaultNetType = 1;  // 双网板沿用板级默认值
     const NetworkType type =
         DualNetworkBoard::LoadNetworkTypeFromSettings(kDefaultNetType);
-    return type == NetworkType::ML307 ? 1 : 0;
+    return type == NetworkType::CELLULAR ? 1 : 0;
+#else
+    return 0;
+#endif
 }
 
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 // 与 network_screen 共用 "network/sim_slot" 这一 NVS key。
 // 返回 0 = 外置卡（默认）/ 1 = 内置卡。
 int GetSavedSimSlot() {
@@ -980,6 +950,7 @@ void ScheduleBootSimSlotQuery() {
         ESP_LOGE(TAG_HOME, "xTaskCreate(home_sim_q) failed");
     }
 }
+#endif
 
 void UpdateHomeStatusBar(HomeStatusState* st) {
     if (st == nullptr || st->bar == nullptr) {
@@ -991,6 +962,7 @@ void UpdateHomeStatusBar(HomeStatusState* st) {
         lv_label_set_text(st->network_type_lbl, net_type == 1 ? "4G" : "WiFi");
     }
 
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     // SIM 卡名称：4G 模式下显示「外置卡 / 内置卡」，WiFi 模式下整个标签隐藏。
     // 只在内容真正变化时更新，省一次 invalidate。
     if (st->sim_slot_lbl != nullptr) {
@@ -1009,6 +981,7 @@ void UpdateHomeStatusBar(HomeStatusState* st) {
         }
     }
     st->last_net_type = net_type;
+#endif
 
     const char* icon = Board::GetInstance().GetNetworkStateIcon();
     if (icon != nullptr && st->network_icon_lbl != nullptr &&
@@ -1079,14 +1052,8 @@ void UpdateHomeStatusBar(HomeStatusState* st) {
             const bool low = !charging && battery_level < 20;
 
             char buf[48];
-            uint16_t dbg_mv = 0;
             char volt_str[16];
-            if (Bq27220Gauge::GetInstance().GetVoltageMv(dbg_mv)) {
-                std::snprintf(volt_str, sizeof(volt_str), "%.2fV",
-                              dbg_mv / 1000.0f);
-            } else {
-                std::snprintf(volt_str, sizeof(volt_str), "--V");
-            }
+            std::snprintf(volt_str, sizeof(volt_str), "--V");
             if (charging) {
                 std::snprintf(buf, sizeof(buf), I18n::T("电量 %d%% 充电中 %s"),
                               battery_level, volt_str);
@@ -1214,6 +1181,7 @@ lv_obj_t* CreateStatusBar(lv_obj_t* screen, HomeStatusState* st) {
     lv_obj_set_style_text_color(st->network_type_lbl, lv_color_hex(0xFFFFFF),
                                 LV_PART_MAIN);
 
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     // SIM 卡标签（外置卡 / 内置卡），用稍浅一些的灰色与「4G」做视觉区分。
     // 默认隐藏，UpdateHomeStatusBar 会根据当前网络类型决定显隐。
     st->sim_slot_lbl = lv_label_create(left);
@@ -1224,6 +1192,7 @@ lv_obj_t* CreateStatusBar(lv_obj_t* screen, HomeStatusState* st) {
     lv_obj_set_style_text_color(st->sim_slot_lbl, lv_color_hex(0xC9D1D9),
                                 LV_PART_MAIN);
     lv_obj_add_flag(st->sim_slot_lbl, LV_OBJ_FLAG_HIDDEN);
+#endif
 
     // ---- 状态栏右侧：电池电量文字（时间单独居中浮在状态栏正中） ----
     // 故意不再放 font_awesome 电池图标，避免字符渲染不到 / 占位问题。
@@ -1295,7 +1264,9 @@ lv_obj_t* CreateStatusBar(lv_obj_t* screen, HomeStatusState* st) {
     UpdateHomeStatusBar(st);
     st->update_timer = lv_timer_create(OnHomeStatusTimer, 1000, st);
     s_home_status = st;
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     ScheduleBootSimSlotQuery();
+#endif
 
     lv_obj_add_event_cb(screen, OnHomeStatusDeleted, LV_EVENT_DELETE, st);
     return bar;

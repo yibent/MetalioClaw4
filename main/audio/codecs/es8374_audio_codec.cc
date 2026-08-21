@@ -1,5 +1,6 @@
 #include "es8374_audio_codec.h"
 
+#include <driver/gpio.h>
 #include <esp_log.h>
 
 #define TAG "Es8374AudioCodec"

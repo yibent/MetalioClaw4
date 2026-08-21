@@ -1,6 +1,8 @@
 tmp/
 # 忽略 components 下内容（用 /* 而非 /，否则 ! 例外无法生效）
 components/*
+!components/xiaozhi_network/
+!components/xiaozhi_network/**
 managed_components/
 build/
 .vscode/

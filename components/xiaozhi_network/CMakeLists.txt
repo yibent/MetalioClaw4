@@ -1,0 +1,19 @@
+idf_component_register(
+    SRCS
+        "src/esp_network.cc"
+        "src/esp_tcp.cc"
+        "src/esp_ssl.cc"
+        "src/esp_udp.cc"
+        "src/esp_mqtt.cc"
+        "src/http_client.cc"
+        "src/web_socket.cc"
+    INCLUDE_DIRS
+        "include"
+    PRIV_INCLUDE_DIRS
+        "src"
+    REQUIRES
+        "esp-tls"
+        "pthread"
+        "mqtt"
+)
+

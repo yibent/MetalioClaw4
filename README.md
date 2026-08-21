@@ -159,7 +159,7 @@ Metalio Claw4 ships with a focused set of built‑in apps. Developers can **mix,
 | **Smart Controller**                                                             | Voice dialogue + MCP protocol to control IoT devices       |
 | **Outdoor Navigation**                                                           | GPS hardware service, 4G data                              |
 | **Entertainment**                                                                | Bluetooth speaker mode, Game                              |
-| **Development Debug**                                                            | Pin test, System Info, factory hardware tests              |
+| **Development Debug**                                                            | System Info, runtime logs                                  |
 
 ---
 
@@ -454,7 +454,7 @@ main/
 │   ├── config.h                # GPIO pins, screen params
 │   ├── config.json             # Build config
 │   └── metalio-claw-4.cc       # Board entry point
-├── display/screen/             # LVGL apps (incl. settings / standby / test / sd_card)
+├── display/screen/             # LVGL apps (incl. settings / standby / sd_card)
 ├── audio/                      # Capture, playback, wake‑word
 ├── protocols/                  # WebSocket / MQTT
 └── boards/common/              # Common drivers (GPS, SD, fuel gauge, usb_virtual_disk, …)
@@ -498,10 +498,8 @@ Home‑screen app list (`home_screen.cc` → `kApps[]`):
 | Calculator     | `calculator`     | Four‑function arithmetic                                                 |
 | Weather        | `weather`        | City weather query                                                       |
 | SD Card        | `sd`             | Browse / delete files; **Enable virtual USB** (§14.6)                    |
-| Pin Test       | `pin`            | GPIO test                                                                |
 | 2048           | `2048`           | Small game                                                               |
 | System Info    | `info`           | Firmware version / chip / MAC                                            |
-| Test           | `test`           | Factory entry: auto test, stress test, hardware tests, etc.              |
 | Settings       | `settings`       | Volume / brightness / standby / **language** / Bluetooth / charge (if IC) |
 | AI Image Gen   | `ai_image_gen`   | Voice prompt → text‑to‑image; multi‑image tabs (§11.3)                   |
 | Translate      | `translate`      | Sonicloud realtime interpretation (§11.2)                                |
@@ -513,10 +511,6 @@ Home‑screen app list (`home_screen.cc` → `kApps[]`):
 - **Bluetooth**: Former standalone Bluetooth Config lives here (modes 1/2/3, scan & pair, Reset Bluetooth)  
 - **Charge**: Charge‑current presets when a charge IC (e.g. CX25601N) is present; tab hidden otherwise  
 - Volume and backlight are also here (no separate home **Backlight** icon)
-
-#### Test
-
-Factory / stress entry (`test_screen`): auto tests (fuel gauge / wireless charge / camera, …), stress test (LVGL + BGM + motor + camera loop), hardware checks. Everyday users can ignore this.
 
 #### 11.1 Chat (`chat`)
 
@@ -811,10 +805,9 @@ The device can expose microSD as **USB Mass Storage** to a PC (`usb_virtual_disk
 
 After board init, a background task prints CPU usage, free memory, and battery status each second—handy for performance/power analysis.
 
-### 15.3 Pin Test & Factory Test
+### 15.3 System Info
 
-- Home **Pin Test**: quick GPIO / peripheral connectivity check (`pin_test_screen`).  
-- Home **Test**: factory entry (auto test, stress test, hardware tests, … — `test_screen`).
+The System Info app displays firmware version, chip model, MAC address, and runtime status.
 
 ### 15.4 Frequently Asked Questions
 

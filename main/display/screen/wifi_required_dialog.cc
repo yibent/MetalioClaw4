@@ -3,7 +3,9 @@
 #include <algorithm>
 
 #include "i18n.h"
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 #include "dual_network_board.h"
+#endif
 #include "screen_util.h"
 
 #include <wifi_manager.h>
@@ -29,6 +31,7 @@ void OnOkClicked(lv_event_t* /*e*/) {
 }  // namespace
 
 bool WifiRequired_ShouldBlock() {
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     // 无蜂窝模组的板卡始终使用 Wi-Fi；不要被 NVS 中残留的 4G 选择绕过拦截。
     if (dynamic_cast<DualNetworkBoard*>(&Board::GetInstance()) == nullptr) {
         return !WifiManager::GetInstance().IsConnected();
@@ -42,6 +45,9 @@ bool WifiRequired_ShouldBlock() {
         return false;
     }
     return !WifiManager::GetInstance().IsConnected();
+#else
+    return !WifiManager::GetInstance().IsConnected();
+#endif
 }
 
 void WifiRequired_ShowDialog(const char* hint_msgid) {

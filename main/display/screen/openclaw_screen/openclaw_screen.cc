@@ -205,7 +205,7 @@ std::atomic<uint32_t> s_worker_list_session{0};
 std::atomic<bool>     s_navigating_within_openclaw{false};
 
 // OpenClaw 所有 HTTP 串行化，避免 worker 与录音上传 task 并发触发
-// esp-ml307 HttpClient / EspTcp 回调死锁（Interrupt WDT）。
+// 蜂窝网络 HttpClient / EspTcp 回调死锁（Interrupt WDT）。
 std::mutex            s_openclaw_http_mutex;
 
 // 未激活拦截：全屏模态弹窗，不可关闭，仅能通过返回键离开。
