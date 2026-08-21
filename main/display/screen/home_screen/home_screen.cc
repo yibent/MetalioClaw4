@@ -40,6 +40,14 @@
 #include "info_screen/info_screen.h"
 #include "wifi_required_dialog.h"
 
+namespace {
+HomeScreen::HostBackCallback s_host_back_callback = nullptr;
+}  // namespace
+
+void HomeScreen::SetHostBackCallback(HostBackCallback callback) {
+    s_host_back_callback = callback;
+}
+
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_30_4);
 LV_FONT_DECLARE(font_awesome_20_4);
@@ -1167,6 +1175,20 @@ lv_obj_t* CreateStatusBar(lv_obj_t* screen, HomeStatusState* st) {
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(left, 10, LV_PART_MAIN);
 
+    if (s_host_back_callback != nullptr) {
+        lv_obj_t* back = lv_label_create(left);
+        lv_label_set_text(back, FONT_AWESOME_ARROW_LEFT);
+        lv_obj_set_style_text_font(back, &font_awesome_20_4, LV_PART_MAIN);
+        lv_obj_set_style_text_color(back, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+        lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(
+            back,
+            [](lv_event_t*) {
+                if (s_host_back_callback != nullptr) s_host_back_callback();
+            },
+            LV_EVENT_CLICKED, nullptr);
+    }
+
     st->network_icon_lbl = lv_label_create(left);
     lv_label_set_text(st->network_icon_lbl, FONT_AWESOME_WIFI);
     lv_obj_set_style_text_font(st->network_icon_lbl, &font_awesome_20_4, LV_PART_MAIN);
@@ -2038,6 +2060,7 @@ lv_obj_t* HomeScreen::Create() {
 
     lv_obj_t* screen = lv_obj_create(NULL);
     lv_obj_set_size(screen, Layout().panel_width, Layout().panel_height);
+    screen_mark_native_layout(screen);
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_pad_all(screen, 0, LV_PART_MAIN);

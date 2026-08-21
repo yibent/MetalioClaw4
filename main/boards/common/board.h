@@ -76,6 +76,10 @@ public:
     virtual bool GetBatteryLevel(int &level, bool& charging, bool& discharging);
     virtual std::string GetSystemInfoJson();
     virtual void SetPowerSaveMode(bool enabled) = 0;
+    virtual void SetLowPowerStandby(bool enabled) { (void)enabled; }
+    virtual int GetScreenOffMinMhz() const { return 40; }
+    virtual int GetActiveDisplayMinMhz() const { return 80; }
+    virtual void SetPerformanceMaxMhz(int mhz) { (void)mhz; }
     virtual std::string GetBoardJson() = 0;
     virtual std::string GetDeviceStatusJson() = 0;
     virtual void SetNetworkEventCallback(NetworkEventCallback callback) { (void)callback; }

@@ -54,6 +54,7 @@ public:
 
     // Add theme switching function
     virtual void SetTheme(Theme* theme) override;
+    virtual bool SetPowerSaveModeChecked(bool on) override;
     
     // Set whether to hide chat messages/subtitles
     void SetHideSubtitle(bool hide);

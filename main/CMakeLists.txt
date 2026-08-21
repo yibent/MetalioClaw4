@@ -19,6 +19,20 @@ set(SOURCES "audio/audio_codec.cc"
             "display/touch_feed.cc"
             "display/font/font_puhui_number_50_4.c"
             "display/font/font_puhui_number_120_4.c"
+            "display/font/font_agent_small_18.c"
+            "display/font/font_agent_medium_28.c"
+            "display/font/font_agent_large_56.c"
+            "display/font/font_agent_small_bold_18.c"
+            "display/font/font_agent_medium_bold_28.c"
+            "display/font/font_agent_large_bold_56.c"
+            "display/font/font_agent_emoji_18.c"
+            "display/font/font_agent_emoji_28.c"
+            "display/font/font_agent_emoji_56.c"
+            "display/font/font_agent_home_name_bold_35.c"
+            "display/font/font_agent_home_number_bold_70.c"
+            "display/ui_dispatcher.cc"
+            "ai_provider_config.cc"
+            "hermes_voice_session.cc"
             "i18n/i18n.cc"
             "display/screen/screen_util.cc"
             "display/screen/wifi_required_dialog.cc"
@@ -68,6 +82,13 @@ set(SOURCES "audio/audio_codec.cc"
             )
 
 set(INCLUDE_DIRS "." "i18n" "display" "display/font" "display/lvgl_display" "display/lvgl_display/jpg" "display/screen" "display/screen/boot_screen" "display/screen/ota_screen" "display/screen/home_screen" "display/screen/game_2048_screen" "display/screen/calculator_screen" "display/screen/calendar_screen" "display/screen/weather_screen" "display/screen/camera_screen" "display/screen/backlight_screen" "display/screen/settings_screen" "display/screen/bluetooth_screen" "display/screen/chat_screen" "display/screen/network_screen" "display/screen/sd_card_screen" "display/screen/openclaw_screen" "display/screen/ai_image_gen_screen" "display/screen/translate_screen" "display/screen/info_screen" "display/screen/standby_screen" "audio" "protocols")
+
+include("${CMAKE_CURRENT_LIST_DIR}/display/agent_ui/sources.cmake")
+list(APPEND SOURCES ${AGENT_UI_SOURCES})
+list(APPEND SOURCES "display/agent_ui/core/performance_manager.cc")
+list(APPEND SOURCES "display/agent_ui/core/app_mcp_tools.cc")
+list(APPEND SOURCES "display/agent_ui/components/ui_components.cc")
+list(APPEND INCLUDE_DIRS ${AGENT_UI_INCLUDE_DIRS})
 
 # Add board common files
 file(GLOB BOARD_COMMON_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/boards/common/*.cc)

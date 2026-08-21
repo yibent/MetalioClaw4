@@ -34,6 +34,8 @@
 
 #define DISPLAY_WIDTH 480
 #define DISPLAY_HEIGHT 800
+#define DISPLAY_H_RES DISPLAY_WIDTH
+#define DISPLAY_V_RES DISPLAY_HEIGHT
 
 #define LCD_H_RES                  (480)
 #define LCD_V_RES                  (800)

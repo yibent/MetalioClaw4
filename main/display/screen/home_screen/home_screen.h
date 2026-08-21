@@ -4,6 +4,11 @@
 
 class HomeScreen {
 public:
+    using HostBackCallback = void (*)();
+
+    // When set, the launcher shows a back control that returns to Agent UI.
+    static void SetHostBackCallback(HostBackCallback callback);
+
     // Create a fullscreen home page using the active LVGL display resolution.
     // App icons are laid out in a responsive 3x3 grid with their names below.
     static lv_obj_t* Create();

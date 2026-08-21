@@ -20,6 +20,10 @@
 #include "mmap_generate_resources.h"
 #include "screen/boot_screen/boot_screen.h"
 #include "screen/home_screen/home_screen.h"
+#include "agent_ui/agent_ui_runtime.h"
+#include "agent_ui/apps/boot/boot_view.h"
+#include "application.h"
+#include "device_state.h"
 
 #define TAG "LcdDisplay"
 
@@ -352,17 +356,13 @@ void MipiLcdDisplay::SetupStartupUI() {
     }
 
     DisplayLockGuard lock(this);
-    lv_obj_t* boot_scr = BootScreen::Create();
+    agent_ui::Runtime::Get().Initialize();
+    lv_obj_t* boot_scr = agent_ui::BootView::Create();
     lv_screen_load(boot_scr);
 
     lv_timer_t* timer = lv_timer_create(
         [](lv_timer_t* timer) {
-            lv_obj_t* old_scr = lv_screen_active();
-            lv_obj_t* home_scr = HomeScreen::Create();
-            lv_screen_load(home_scr);
-            if (old_scr != nullptr && old_scr != home_scr) {
-                lv_obj_delete(old_scr);
-            }
+            agent_ui::Runtime::Get().Start();
             lv_timer_delete(timer);
         },
         2000, nullptr);
@@ -379,6 +379,21 @@ bool MipiLcdDisplay::AddTouch(esp_lcd_touch_handle_t touch_handle) {
         .handle = touch_handle,
     };
     return lvgl_port_add_touch(&touch_cfg) != nullptr;
+}
+
+bool LcdDisplay::SetPowerSaveModeChecked(bool on) {
+    if (panel_ == nullptr) {
+        SetPowerSaveMode(on);
+        return true;
+    }
+    const esp_err_t err = esp_lcd_panel_disp_on_off(panel_, !on);
+    if (err == ESP_OK || err == ESP_ERR_NOT_SUPPORTED) {
+        SetPowerSaveMode(on);
+        return true;
+    }
+    ESP_LOGW(TAG, "panel power save %s failed: %s",
+             on ? "on" : "off", esp_err_to_name(err));
+    return false;
 }
 
 LcdDisplay::~LcdDisplay() {
@@ -1055,6 +1070,13 @@ void LcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
 }
 
 void LcdDisplay::SetChatMessage(const char* role, const char* content) {
+    if (role != nullptr && content != nullptr && content[0] != '\0') {
+        const bool is_user = std::strcmp(role, "user") == 0;
+        const bool is_assistant = std::strcmp(role, "assistant") == 0;
+        if (is_user || is_assistant) {
+            agent_ui::Runtime::Get().SetConversationMessage(role, content);
+        }
+    }
     DisplayLockGuard lock(this);
     if (chat_message_label_ == nullptr) {
         return;
@@ -1064,6 +1086,9 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
 #endif
 
 void LcdDisplay::SetEmotion(const char* emotion) {
+    if (emotion != nullptr && std::strcmp(emotion, "dizzy") == 0) {
+        agent_ui::Runtime::Get().PlayDizzyExpression();
+    }
     // Stop any running GIF animation
     if (gif_controller_) {
         DisplayLockGuard lock(this);

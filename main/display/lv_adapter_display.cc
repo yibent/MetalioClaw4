@@ -16,6 +16,10 @@
 #include "screen/chat_screen/chat_screen.h"
 #include "screen/home_screen/home_screen.h"
 
+#include "agent_ui/agent_ui_runtime.h"
+#include "agent_ui/apps/boot/boot_view.h"
+#include "device_state.h"
+
 #include "application.h"
 
 static const char* TAG = "LVAdapterDisplay";
@@ -95,24 +99,17 @@ LVAdapterDisplay::LVAdapterDisplay(const esp_lcd_panel_handle_t panel,
         SetupUI();
         esp_lv_adapter_unlock();
     }
-
-    // Application::GetInstance().ScheduleStopVoiceUiSession();  // legacy ForceReturnToIdle removed
 }
 
 void LVAdapterDisplay::SetupUI() {
-    lv_obj_t* boot_scr = BootScreen::Create();
+    agent_ui::Runtime::Get().Initialize();
+    lv_obj_t* boot_scr = agent_ui::BootView::Create();
     lv_screen_load(boot_scr);
 
     lv_timer_t* timer = lv_timer_create(
         [](lv_timer_t* t) {
-            lv_obj_t* old_scr = lv_screen_active();
-
             if (esp_lv_adapter_lock(-1) == ESP_OK) {
-                lv_obj_t* home_scr = HomeScreen::Create();
-                lv_screen_load(home_scr);
-                if (old_scr != NULL && old_scr != home_scr) {
-                    lv_obj_delete(old_scr);
-                }
+                agent_ui::Runtime::Get().Start();
                 esp_lv_adapter_unlock();
             }
 
@@ -126,10 +123,9 @@ LVAdapterDisplay::~LVAdapterDisplay() = default;
 
 void LVAdapterDisplay::SetEmotion(const char* const emotion) {
     ESP_LOGI(TAG, "SetEmotion: %s", emotion != nullptr ? emotion : "<null>");
-    if (esp_lv_adapter_lock(-1) != ESP_OK) {
-        return;
-    }
-    ChatScreen::SetEmotion(emotion != nullptr ? emotion : "neutral");
+    if (emotion == nullptr || std::strcmp(emotion, "dizzy") != 0) return;
+    if (esp_lv_adapter_lock(-1) != ESP_OK) return;
+    agent_ui::Runtime::Get().PlayDizzyExpression();
     esp_lv_adapter_unlock();
 }
 
@@ -138,31 +134,43 @@ void LVAdapterDisplay::SetChatMessage(const char* const role, const char* const 
         return;
     }
 
-    // role 归一化：
-    //   user             -> 用户发言
-    //   assistant/system -> 设备 / AI 回应
     const bool is_user = (std::strcmp(role, "user") == 0);
-    const bool is_bot  = (std::strcmp(role, "assistant") == 0 ||
-                          std::strcmp(role, "system") == 0);
-    if (!is_user && !is_bot) {
-        return;
-    }
-
-    // 仅在聊天页前台时接收消息，其他页面直接丢弃，避免后台无界堆积。
-    const bool chat_active = ChatScreen::IsActive();
-    if (!chat_active) {
+    const bool is_assistant = (std::strcmp(role, "assistant") == 0);
+    if (!is_user && !is_assistant) {
         return;
     }
 
     if (esp_lv_adapter_lock(-1) != ESP_OK) {
         return;
     }
-    ChatScreen::AddMessage(content,
-                           is_user ? ChatMsgDir::Right : ChatMsgDir::Left);
+    agent_ui::Runtime::Get().SetConversationMessage(role, content);
+    if (ChatScreen::IsActive()) {
+        ChatScreen::AddMessage(content,
+                               is_user ? ChatMsgDir::Right : ChatMsgDir::Left);
+    }
     esp_lv_adapter_unlock();
 }
 
-void LVAdapterDisplay::SetStatus(const char* const status) {}
+void LVAdapterDisplay::SetStatus(const char* const status) {
+    if (esp_lv_adapter_lock(-1) != ESP_OK) return;
+    auto& ui = agent_ui::Runtime::Get();
+    ui.SetSystemStatus(status);
+    switch (Application::GetInstance().GetDeviceState()) {
+        case kDeviceStateConnecting:
+            ui.SetAgentState(agent_ui::AgentState::Connecting);
+            break;
+        case kDeviceStateListening:
+            ui.SetAgentState(agent_ui::AgentState::Listening);
+            break;
+        case kDeviceStateSpeaking:
+            ui.SetAgentState(agent_ui::AgentState::Answering);
+            break;
+        default:
+            ui.SetAgentState(agent_ui::AgentState::Idle);
+            break;
+    }
+    esp_lv_adapter_unlock();
+}
 
 void LVAdapterDisplay::ShowNotification(const char* notification, int duration_ms) {}
 

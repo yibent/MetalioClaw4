@@ -12,6 +12,8 @@
 #include "settings.h"
 #include "assets/lang_config.h"
 #include "jpg/image_to_jpeg.h"
+#include "agent_ui/agent_ui_runtime.h"
+#include "device_state.h"
 
 #define TAG "Display"
 
@@ -70,6 +72,23 @@ LvglDisplay::~LvglDisplay() {
 }
 
 void LvglDisplay::SetStatus(const char* status) {
+    auto& ui = agent_ui::Runtime::Get();
+    ui.SetSystemStatus(status);
+    switch (Application::GetInstance().GetDeviceState()) {
+        case kDeviceStateConnecting:
+            ui.SetAgentState(agent_ui::AgentState::Connecting);
+            break;
+        case kDeviceStateListening:
+            ui.SetAgentState(agent_ui::AgentState::Listening);
+            break;
+        case kDeviceStateSpeaking:
+            ui.SetAgentState(agent_ui::AgentState::Answering);
+            break;
+        default:
+            ui.SetAgentState(agent_ui::AgentState::Idle);
+            break;
+    }
+
     DisplayLockGuard lock(this);
     if (status_label_ == nullptr) {
         return;

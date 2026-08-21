@@ -24,6 +24,7 @@ struct TouchSnapshot {
 };
 
 TouchSnapshot s_snap;
+void (*s_activity_callback)() = nullptr;
 
 #if TOUCH_FEED_DEBUG
 bool s_log_was_pressed = false;
@@ -141,6 +142,9 @@ void IndevReadCb(lv_indev_t* indev, lv_indev_data_t* data) {
     data->point.y = snap.y;
     data->state =
         snap.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    if (snap.pressed && s_activity_callback != nullptr) {
+        s_activity_callback();
+    }
 }
 
 }  // namespace
@@ -188,6 +192,10 @@ void touch_feed_attach_indev(lv_indev_t* indev) {
         return;
     }
     lv_indev_set_read_cb(indev, IndevReadCb);
+}
+
+void touch_feed_set_activity_callback(void (*callback)()) {
+    s_activity_callback = callback;
 }
 
 void touch_feed_stop() {

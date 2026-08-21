@@ -29,6 +29,7 @@
 #include "ota_screen.h"
 #include "home_screen.h"
 #include "chat_screen/chat_screen.h"
+#include "agent_ui/agent_ui_runtime.h"
 #endif
 
 #define TAG "Application"
@@ -387,6 +388,9 @@ void Application::StopListening() {
 
 void Application::Start() {
     auto& board = Board::GetInstance();
+#ifdef HAVE_LVGL
+    agent_ui::Runtime::Get().OnBoardReady(board);
+#endif
     SetDeviceState(kDeviceStateStarting);
 
     /* Setup the display */
@@ -1252,4 +1256,30 @@ void Application::ApplyVoiceUiStop() {
     ParkVoiceUiProtocol();
     SoftStopVoiceAudioPaths();
     ESP_LOGI(TAG, "ApplyVoiceUiStop: AFE destroyed, protocol parked");
+}
+
+void Application::ForceReturnToIdle() {
+    Schedule([this]() {
+        if (device_state_ != kDeviceStateConnecting &&
+            device_state_ != kDeviceStateListening &&
+            device_state_ != kDeviceStateSpeaking) {
+            return;
+        }
+
+        if (device_state_ == kDeviceStateSpeaking) {
+            AbortSpeaking(kAbortReasonNone);
+        } else if (device_state_ == kDeviceStateListening && protocol_) {
+            protocol_->SendStopListening();
+        }
+
+        if (protocol_ && protocol_->IsAudioChannelOpened()) {
+            protocol_->CloseAudioChannel();
+        }
+        audio_service_.ResetDecoder();
+        SetDeviceState(kDeviceStateIdle);
+    });
+}
+
+void Application::SetLowPowerStandby(bool enabled) {
+    low_power_standby_.store(enabled);
 }

@@ -47,6 +47,19 @@ extern "C" esp_err_t board_recover_lcd_after_camera(void) {
     return ESP_OK;
 }
 
+extern "C" esp_lcd_panel_io_handle_t metalio_claw_4_get_panel_io() {
+    return s_fangtang_panel_io;
+}
+
+extern "C" i2c_master_bus_handle_t metalio_claw_4_get_i2c_bus() {
+    return s_fangtang_i2c_bus;
+}
+
+extern "C" esp_err_t esp_lcd_nv3051f_replay_vendor_init(esp_lcd_panel_io_handle_t io) {
+    (void)io;
+    return ESP_OK;
+}
+
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_awesome_20_4);
 

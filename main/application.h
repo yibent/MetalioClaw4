@@ -10,11 +10,13 @@
 #include <mutex>
 #include <deque>
 #include <memory>
+#include <atomic>
 
 #include "protocol.h"
 #include "ota.h"
 #include "audio_service.h"
 #include "device_state_event.h"
+#include "ai_provider_config.h"
 
 
 #define MAIN_EVENT_SCHEDULE (1 << 0)
@@ -78,6 +80,14 @@ public:
     bool IsDeviceActivated() const;
     bool IsBootReady() const { return boot_ready_; }
 
+    void ForceReturnToIdle();
+    void SetLowPowerStandby(bool enabled);
+    bool IsLowPowerStandby() const { return low_power_standby_.load(); }
+    bool IsCodexVoiceCaptureActive() const { return false; }
+    void TriggerSpecialInteraction(int /*interaction*/) {}
+    bool IsHermesVoiceBusy() const { return false; }
+    void ApplyAiProviderSelection(const AiProviderConfig&) {}
+
 private:
     Application();
     ~Application();
@@ -103,6 +113,7 @@ private:
     volatile bool voice_ui_active_ = false;
     // 使延迟 Release / 启动重试失效（leave/enter 递增）。
     volatile uint32_t voice_ui_epoch_ = 0;
+    std::atomic<bool> low_power_standby_{false};
     uint32_t voice_ui_pending_release_epoch_ = 0;
     uint32_t voice_ui_pending_retry_epoch_ = 0;
 
