@@ -71,16 +71,12 @@ public:
     bool IsVoiceUiDesired() const { return voice_ui_desired_; }
 
     bool HasPendingActivation() const {
-        return !activation_suspended_ && !pending_activation_code_.empty();
+        return !pending_activation_code_.empty();
     }
     const std::string& GetPendingActivationCode() const { return pending_activation_code_; }
     // 启动流水线已走到 Idle，且当前无需等待激活码 / 不在 activating。
     bool IsDeviceActivated() const;
     bool IsBootReady() const { return boot_ready_; }
-    void SetActivationSuspended(bool suspended);
-    bool IsActivationSuspended() const { return activation_suspended_; }
-    void StopSystemAudioForStressTest();
-    void RestoreSystemAudioAfterStressTest();
 
 private:
     Application();
@@ -99,7 +95,6 @@ private:
     std::string last_error_message_;
     AudioService audio_service_;
     std::string pending_activation_code_;
-    volatile bool activation_suspended_ = false;
     // 仅在 Application::Start() 末尾首次进入 Idle 后置位；starting/activating 期间为 false。
     volatile bool boot_ready_ = false;
     // UI 期望：页面 enter/leave 写入；Sync 在主循环对齐实际会话。

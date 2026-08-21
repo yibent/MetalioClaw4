@@ -23,8 +23,10 @@
 #include "application.h"
 #include "board.h"
 #include "config.h"
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 #include "dual_network_board.h"
 #include "nt26_board.h"
+#endif
 #include "settings.h"
 
 #include "home_screen/home_screen.h"
@@ -96,6 +98,7 @@ struct UiState {
     lv_obj_t* nearby_spinner = nullptr; // 扫描中悬浮在列表中央的圆环 spinner
     lv_obj_t* saved_list    = nullptr;
     lv_obj_t* clear_btn     = nullptr;
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     // 上网方式切换（WiFi / 4G）：和 SIM 卡切换一致的两按钮选择器
     lv_obj_t* network_wifi_btn    = nullptr;
     lv_obj_t* network_wifi_lbl    = nullptr;
@@ -108,6 +111,7 @@ struct UiState {
     lv_obj_t* sim_internal_btn    = nullptr;
     lv_obj_t* sim_internal_lbl    = nullptr;
     lv_obj_t* sim_current_lbl     = nullptr;
+#endif
     // 密码键盘弹窗
     lv_obj_t* pwd_overlay   = nullptr;
     lv_obj_t* pwd_textarea  = nullptr;
@@ -143,7 +147,7 @@ lv_timer_t*          s_restart_timer = nullptr;
 int                  s_restart_remaining = 0;
 std::string          s_restart_headline;
 // 记录进入页面前 WifiStation 是否已经在跑（即设备网络模式是 WiFi），
-// 用来决定离开时是否恢复 WifiManager 的 station。ML307 模式下 WifiStation
+// 用来决定离开时是否恢复 WifiManager 的 station。蜂窝模式下 WifiStation
 // 根本没起过，恢复时跳过即可，避免空跑一份 wifi 栈。
 bool                 s_wifi_station_was_active = false;
 // WifiManager keeps the WiFi driver initialized for the rest of the device
@@ -151,10 +155,11 @@ bool                 s_wifi_station_was_active = false;
 // deinitialize a driver that the manager still owns.
 bool                 s_wifi_manager_was_initialized = false;
 bool                 s_wifi_driver_owned_by_screen = false;
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 bool                 s_network_switch_pending = false;
 
 // 上网方式（network/type NVS key）：与 DualNetworkBoard::LoadNetworkTypeFromSettings
-// 一致。0 = WiFi，1 = 4G（蜂窝模组）。切换由 DualNetworkBoard::SwitchNetworkType()
+// 一致。0 = WiFi，1 = 蜂窝网络。切换由 DualNetworkBoard::SwitchNetworkType()
 // 主导，并触发设备重启。
 constexpr int        kNetTypeWifi     = 0;
 constexpr int        kNetTypeCellular = 1;
@@ -167,6 +172,7 @@ constexpr int        kNetTypeCellular = 1;
 constexpr int        kSimSlotExternal = 0;
 constexpr int        kSimSlotInternal = 1;
 bool                 s_sim_switch_pending = false;
+#endif
 
 // 前向声明
 void post_status(const char* text, uint32_t color = kColorText);
@@ -185,12 +191,14 @@ void show_failure_in_status_popup(const std::string& title,
                                   const std::string& detail,
                                   uint32_t auto_close_ms = 2500);
 void close_status_popup();
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 void refresh_network_switch_ui();
 void open_switch_reboot_popup(const char* target_name);
 void schedule_network_switch(int target_type);
 void refresh_sim_slot_ui();
 void open_sim_switching_popup(int target_slot);
 void schedule_sim_slot_query();
+#endif
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -243,6 +251,7 @@ const char* rssi_quality_text(int8_t rssi) {
 
 bool screen_alive() { return s_screen_active && s_ui.screen != nullptr; }
 
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 DualNetworkBoard* GetDualNetworkBoard() {
     return dynamic_cast<DualNetworkBoard*>(&Board::GetInstance());
 }
@@ -255,11 +264,11 @@ int GetSavedNetworkType() {
 
     const NetworkType type =
         DualNetworkBoard::LoadNetworkTypeFromSettings(kNetTypeCellular);
-    return type == NetworkType::ML307 ? kNetTypeCellular : kNetTypeWifi;
+    return type == NetworkType::CELLULAR ? kNetTypeCellular : kNetTypeWifi;
 }
 
 // 当前是否处于 4G（蜂窝）模式。Settings 中 "network/type" 的语义：
-// 0 = WiFi、1 = 4G/ML307。4G 模式下我们不展示「附近 WiFi」「已保存 WiFi」
+// 0 = WiFi、1 = 蜂窝网络。蜂窝模式下我们不展示「附近 WiFi」「已保存 WiFi」
 // 两个 Tab，也不会启动本地 STA 栈做扫描。
 bool IsCellularMode() {
     return GetDualNetworkBoard() != nullptr &&
@@ -293,6 +302,11 @@ void SaveSimSlot(int slot) {
 const char* SimSlotName(int slot) {
     return (slot == kSimSlotInternal) ? I18n::T("内置卡") : I18n::T("外置卡");
 }
+#endif
+
+#if !CONFIG_BOARD_TYPE_METALIO_CLAW_4
+bool IsCellularMode() { return false; }
+#endif
 
 // ---------------------------------------------------------------------------
 // 异步 UI 更新（worker task -> LVGL 线程）
@@ -560,7 +574,7 @@ void wifi_teardown_for_screen() {
     s_wifi_initialized = false;
     ESP_LOGI(TAG, "wifi stack torn down");
 
-    // 只有进入页面前 WifiStation 在跑时（即 WiFi 模式）才恢复它；ML307
+    // 只有进入页面前 WifiStation 在跑时（即 WiFi 模式）才恢复它；蜂窝
     // 模式下进入本页面前 wifi 栈本来就没起，不要无中生有起一份。
     const bool restore_manager_station =
         s_wifi_station_was_active && s_wifi_manager_was_initialized;
@@ -1461,6 +1475,7 @@ void on_screen_unloaded(lv_event_t* /*e*/) {
     s_ui.nearby_spinner  = nullptr;
     s_ui.saved_list      = nullptr;
     s_ui.clear_btn       = nullptr;
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     s_ui.network_wifi_btn    = nullptr;
     s_ui.network_wifi_lbl    = nullptr;
     s_ui.network_cell_btn    = nullptr;
@@ -1472,6 +1487,7 @@ void on_screen_unloaded(lv_event_t* /*e*/) {
     s_ui.sim_internal_lbl = nullptr;
     s_ui.sim_current_lbl  = nullptr;
     s_network_switch_pending = false;
+#endif
     // 注意：s_sim_switch_pending 不在这里清零——AT 任务可能还在后台跑，
     // 它结束后回调里会检测 screen_alive() 并自行复位。
     s_ui.pwd_overlay   = nullptr;
@@ -1496,6 +1512,7 @@ void on_screen_unloaded(lv_event_t* /*e*/) {
 // ---------------------------------------------------------------------------
 // 网络切换（WiFi <-> 4G）
 // ---------------------------------------------------------------------------
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 void switch_network_task(void* /*arg*/) {
     vTaskDelay(pdMS_TO_TICKS(1500));
     if (auto* dual = GetDualNetworkBoard()) {
@@ -1950,6 +1967,7 @@ void on_sim_external_clicked(lv_event_t* /*e*/) {
 void on_sim_internal_clicked(lv_event_t* /*e*/) {
     schedule_sim_switch(kSimSlotInternal);
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // UI 组装
@@ -2175,6 +2193,7 @@ void build_tabview(lv_obj_t* parent) {
     //   - WiFi 模式：只挂「网络切换」
     //   - 4G 模式：先「SIM 卡切换」（最常用的现场操作），再「网络切换」
     // -----------------------------------------------------------------------
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     auto build_network_switch_tab = [&]() {
         lv_obj_t* tab3 = lv_tabview_add_tab(tv, I18n::T("网络切换"));
         s_ui.network_tab = tab3;
@@ -2350,18 +2369,21 @@ void build_tabview(lv_obj_t* parent) {
 
         refresh_sim_slot_ui();
     };  // build_sim_switch_tab
+#endif
 
     // 真正决定 Tab 顺序的地方：
     //   - 4G 模式：「SIM 卡切换」放在「网络切换」前面，因为更换 SIM 卡是
     //     4G 用户进入这页最常做的事，放第一个最顺手；「网络切换」是兜底
     //     入口（切回 WiFi）。
     //   - WiFi 模式：只挂「网络切换」，没有 SIM 卡概念。
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     if (GetDualNetworkBoard() != nullptr) {
         if (IsCellularMode()) {
             build_sim_switch_tab();
         }
         build_network_switch_tab();
     }
+#endif
 }
 
 }  // namespace
@@ -2416,6 +2438,7 @@ void NetworkScreen::LifecycleCallback(screen_lifecycle_event_t event) {
             // 刷新一遍已保存列表（可能用户在外面改过）
             refresh_saved_list();
         }
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
         refresh_network_switch_ui();
         refresh_sim_slot_ui();
         // 4G 模式下向模组发 AT+ECSIMCFG? 同步真实当前槽位，避免本地 NVS
@@ -2423,6 +2446,7 @@ void NetworkScreen::LifecycleCallback(screen_lifecycle_event_t event) {
         if (IsCellularMode()) {
             schedule_sim_slot_query();
         }
+#endif
     } else {
         ESP_LOGI(TAG, "unload: network_screen");
         s_screen_active = false;

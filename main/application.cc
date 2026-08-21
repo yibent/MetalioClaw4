@@ -191,10 +191,6 @@ void Application::CheckNewVersion(Ota& ota) {
             break;
         }
 
-        while (activation_suspended_) {
-            vTaskDelay(pdMS_TO_TICKS(500));
-        }
-
         display->SetStatus(Lang::Strings::ACTIVATION);
         // Activation code is shown to the user and waiting for the user to input
         if (ota.HasActivationCode()) {
@@ -203,9 +199,6 @@ void Application::CheckNewVersion(Ota& ota) {
 
         // This will block the loop until the activation is done or timeout
         for (int i = 0; i < 10; ++i) {
-            while (activation_suspended_) {
-                vTaskDelay(pdMS_TO_TICKS(500));
-            }
             ESP_LOGI(TAG, "Activating... %d/%d", i + 1, 10);
             esp_err_t err = ota.Activate();
             if (err == ESP_OK) {
@@ -228,10 +221,6 @@ void Application::CheckNewVersion(Ota& ota) {
 }
 
 void Application::ShowActivationCode(const std::string& code, const std::string& message) {
-    if (activation_suspended_) {
-        return;
-    }
-
     // OTA 激活：仅缓存验证码供状态栏展示，不 Alert、不播报数字音。
     pending_activation_code_ = code;
 #ifdef HAVE_LVGL
@@ -239,16 +228,6 @@ void Application::ShowActivationCode(const std::string& code, const std::string&
 #endif
     ESP_LOGI(TAG, "Activation code ready for status bar (no TTS): %s (%s)",
              code.c_str(), message.c_str());
-}
-
-void Application::SetActivationSuspended(bool suspended) {
-    activation_suspended_ = suspended;
-    if (suspended) {
-        DismissAlert();
-        ESP_LOGI(TAG, "Activation suspended for stress test");
-    } else {
-        ESP_LOGI(TAG, "Activation resumed after stress test");
-    }
 }
 
 bool Application::IsDeviceActivated() const {
@@ -267,52 +246,13 @@ bool Application::IsDeviceActivated() const {
     return true;
 }
 
-void Application::StopSystemAudioForStressTest() {
-    if (protocol_ && protocol_->IsAudioChannelOpened()) {
-        protocol_->CloseAudioChannel();
-    }
-
-    if (device_state_ == kDeviceStateSpeaking) {
-        AbortSpeaking(kAbortReasonNone);
-    } else if (device_state_ == kDeviceStateListening && protocol_) {
-        protocol_->SendStopListening();
-    }
-
-    audio_service_.EnableAudioTesting(false);
-    audio_service_.EnableVoiceProcessing(false);
-    audio_service_.EnableWakeWordDetection(false);
-    audio_service_.ResetDecoder();
-
-    for (int i = 0; i < 20 && !audio_service_.IsIdle(); ++i) {
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-
-    if (device_state_ == kDeviceStateListening ||
-        device_state_ == kDeviceStateSpeaking ||
-        device_state_ == kDeviceStateConnecting) {
-        SetDeviceState(kDeviceStateIdle);
-    }
-
-    DismissAlert();
-    ESP_LOGI(TAG, "System audio stopped for stress test");
-}
-
-void Application::RestoreSystemAudioAfterStressTest() {
-    // 唤醒词只属于语音 UI 会话；压力测试结束后由聊天/数字人页重新 SetVoiceUiDesired(true)。
-    if (voice_ui_active_ && device_state_ == kDeviceStateIdle) {
-        audio_service_.EnableWakeWordDetection(true);
-    }
-    ESP_LOGI(TAG, "System audio restored after stress test (voice_ui=%d)",
-             voice_ui_active_ ? 1 : 0);
-}
-
 void Application::Alert(const char* status, const char* message, const char* emotion, const std::string_view& sound) {
     ESP_LOGW(TAG, "Alert [%s] %s: %s", emotion, status, message);
     auto display = Board::GetInstance().GetDisplay();
     display->SetStatus(status);
     display->SetEmotion(emotion);
     display->SetChatMessage("system", message);
-    if (!sound.empty() && !activation_suspended_) {
+    if (!sound.empty()) {
         audio_service_.PlaySound(sound);
     }
 }
@@ -1090,9 +1030,6 @@ void Application::ApplyInterruptPreferenceFromNvs() {
 }
 
 void Application::PlaySound(const std::string_view& sound) {
-    if (activation_suspended_) {
-        return;
-    }
     audio_service_.PlaySound(sound);
 }
 

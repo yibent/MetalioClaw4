@@ -46,7 +46,7 @@ public:
     // 摄像头流水线的启动 / 停止。
     static void LifecycleCallback(screen_lifecycle_event_t event);
 
-    // 供硬件测试页复用：原生 RGB888 预览缓冲与外部 canvas。
+    // 供相机预览与截图流程复用：原生 RGB888 预览缓冲与外部 canvas。
     struct PreviewBuffer {
         uint8_t* data;
         int      width;

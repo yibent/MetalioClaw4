@@ -10,7 +10,9 @@
 #include "bluetooth_screen/bluetooth_screen.h"
 #include "board.h"
 #include "config.h"
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 #include "cx25601n.h"
+#endif
 #include "home_screen/home_screen.h"
 #include "i18n.h"
 #include "screen_util.h"
@@ -53,10 +55,13 @@ struct UiState {
     lv_obj_t* enter_standby_slider = nullptr;
     lv_obj_t* shutdown_min_label = nullptr;
     lv_obj_t* shutdown_slider = nullptr;
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     lv_obj_t* charge_tab = nullptr;
+#endif
 };
 UiState s_ui;
 
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 constexpr int kChargeNormalMa = 500;
 constexpr int kChargeFastMa = 1000;
 constexpr int kChargeDefaultMa = kChargeFastMa;
@@ -95,6 +100,7 @@ bool ApplyChargeMa(int ma) {
     ESP_LOGI(TAG, "charge current -> %d mA", ma);
     return true;
 }
+#endif
 
 void OnSwipeBack();
 void OnBackClicked(lv_event_t* e);
@@ -530,6 +536,7 @@ void BuildBluetoothTab(lv_obj_t* tab) {
     BluetoothScreen::BuildInto(tab);
 }
 
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 void BuildChargeTab(lv_obj_t* tab);
 
 void RebuildChargeTabAsync(void* /*user_data*/) {
@@ -630,6 +637,7 @@ void BuildChargeTab(lv_obj_t* tab) {
     lv_obj_set_style_text_color(foot, lv_color_hex(kColorSubtle), LV_PART_MAIN);
     lv_obj_set_style_text_font(foot, &font_puhui_20_4, LV_PART_MAIN);
 }
+#endif
 
 void BuildTabView(lv_obj_t* parent) {
     const int initial_brightness = ReadInitialBrightness();
@@ -675,11 +683,13 @@ void BuildTabView(lv_obj_t* parent) {
     lv_obj_t* tab_language = lv_tabview_add_tab(tv, I18n::T("语言"));
     BuildLanguageTab(tab_language);
 
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     // 老设备无 CX25601N（0x6B）时不显示充电 Tab
     if (cx25601n_is_ready()) {
         lv_obj_t* tab_charge = lv_tabview_add_tab(tv, I18n::T("充电"));
         BuildChargeTab(tab_charge);
     }
+#endif
 
     lv_obj_t* tab_bluetooth = lv_tabview_add_tab(tv, I18n::T("蓝牙"));
     BuildBluetoothTab(tab_bluetooth);
@@ -714,7 +724,9 @@ void OnScreenUnloaded(lv_event_t* /*e*/) {
     s_ui.enter_standby_slider = nullptr;
     s_ui.shutdown_min_label = nullptr;
     s_ui.shutdown_slider = nullptr;
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     s_ui.charge_tab = nullptr;
+#endif
 }
 
 }  // namespace

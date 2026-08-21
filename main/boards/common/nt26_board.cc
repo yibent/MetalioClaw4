@@ -231,7 +231,7 @@ const char* Nt26Board::GetNetworkStateIcon() {
     return FONT_AWESOME_SIGNAL_OFF;
 }
 void Nt26Board::SetPowerSaveMode(bool enabled) {
-    // TODO: Implement power save mode for ML307
+    // TODO: Implement modem power save mode
 }
 
 // void Nt26Board::SetPowerSaveLevel(PowerSaveLevel level) {

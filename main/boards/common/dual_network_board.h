@@ -3,27 +3,21 @@
 
 #include "board.h"
 #include "wifi_board.h"
-#include "ml307_board.h"
 #include <memory>
 #include "nt26_board.h"
 
 //enum NetworkType
 enum class NetworkType {
     WIFI,
-    ML307
+    CELLULAR
 };
 
-// 双网络板卡类，可以在WiFi和ML307之间切换
+// 双网络板卡类，可以在 WiFi 和 NT26 蜂窝网络之间切换
 class DualNetworkBoard : public Board {
 private:
     // 使用基类指针存储当前活动的板卡
     std::unique_ptr<Board> current_board_;
-    NetworkType network_type_ = NetworkType::ML307;  // Default to ML307
-
-    // ML307的引脚配置
-    gpio_num_t ml307_tx_pin_;
-    gpio_num_t ml307_rx_pin_;
-    gpio_num_t ml307_dtr_pin_;
+    NetworkType network_type_ = NetworkType::CELLULAR;
     
     // Cellular(NT26) pin configuration
     gpio_num_t cellular_tx_pin_;
@@ -38,8 +32,6 @@ private:
     void InitializeCurrentBoard();
  
 public:
-    DualNetworkBoard(gpio_num_t ml307_tx_pin, gpio_num_t ml307_rx_pin, gpio_num_t ml307_dtr_pin = GPIO_NUM_NC, int32_t default_net_type = 1);
-    
     // Explicit constructor with SRDY/RI pin.
     DualNetworkBoard(gpio_num_t cellular_tx_pin,
         gpio_num_t cellular_rx_pin,
@@ -71,4 +63,4 @@ public:
     virtual std::string GetDeviceStatusJson() override;
 };
 
-#endif // DUAL_NETWORK_BOARD_H 
+#endif // DUAL_NETWORK_BOARD_H

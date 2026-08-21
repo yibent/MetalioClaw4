@@ -746,7 +746,7 @@ public:
                     // 4G    -> Nt26Board::GetRegistrationState().stat
                     //          (AT+CEREG 上报的注册状态：1=本网、5=漫游为已注册)
 
-                    // GetCurrentBoard() 在 ML307 模式下返回的就是 Nt26Board
+                    // GetCurrentBoard() 在蜂窝模式下返回的就是 Nt26Board
                     // （metalio-claw-4 的 DualNetworkBoard 这一路只接 NT26），
                     // 所以 static_cast 是安全的；WiFi 模式根本不会走到这个分支。
                     {

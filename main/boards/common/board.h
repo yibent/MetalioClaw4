@@ -1,10 +1,7 @@
 #ifndef BOARD_H
 #define BOARD_H
 
-#include <http.h>
-#include <web_socket.h>
-#include <mqtt.h>
-#include <udp.h>
+#include <functional>
 #include <string>
 #include <network_interface.h>
 

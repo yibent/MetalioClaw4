@@ -1,4 +1,6 @@
 #include "audio_service.h"
+#include "board.h"
+
 #include <esp_log.h>
 #include <cstring>
 

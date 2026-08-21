@@ -159,7 +159,7 @@ Metalio Claw4 自带一组内置 App，开发者可基于现有硬件与软件�
 | **智能中控** | 语音对话 + MCP 协议控制 IoT 设备            |
 | **户外导航** | GPS 硬件服务、4G 联网 |
 | **休闲娱乐** | 蓝牙音箱模式、2048 |
-| **开发调试** | 引脚测试、系统信息、厂测硬件检查                |
+| **开发调试** | 系统信息、运行日志                |
 
 ---
 
@@ -452,7 +452,7 @@ main/
 │   ├── config.h                # GPIO 引脚、屏参
 │   ├── config.json             # 构建配置
 │   └── metalio-claw-4.cc       # 板级启动入口
-├── display/screen/             # LVGL 各功能 App（含 settings / standby / test / sd_card）
+├── display/screen/             # LVGL 各功能 App（含 settings / standby / sd_card）
 ├── audio/                      # 录音、播放、唤醒词
 ├── protocols/                  # WebSocket / MQTT 协议
 └── boards/common/              # 通用驱动（GPS、SD、电量计、usb_virtual_disk 等）
@@ -496,10 +496,8 @@ API 基址定义于 `main/api_endpoints.h`。
 | 计算器 | calculator | 四则运算 |
 | 天气 | weather | 城市天气查询 |
 | SD 卡 | sd | 文件浏览 / 删除；**启用虚拟 U 盘**（§14.6） |
-| 引脚测试 | pin | GPIO 测试 |
 | 2048 | 2048 | 小游戏 |
 | 系统信息 | info | 固件版本 / 芯片 / MAC |
-| 测试 | test | 厂测入口：自动测试、压力测试、硬件测试等 |
 | 设置 | settings | 音量 / 亮度 / 待机 / **语言（中英）** / 蓝牙 / 充电（有充电 IC 时）等 |
 | AI 生图 | ai_image_gen | 语音描述 → 文生图，多图 Tab 与下载（§11.3） |
 | 翻译 | translate | Sonicloud 实时同声传译（§11.2） |
@@ -511,10 +509,6 @@ API 基址定义于 `main/api_endpoints.h`。
 - **蓝牙**：原独立「蓝牙配置」能力并入设置 Tab（模式 1/2/3、扫描配对、复位蓝牙）
 - **充电**：检测到板载充电 IC（如 CX25601N）时显示电流档位；无芯片则隐藏该 Tab
 - 音量、背光等亦在此调节（不再单独提供「屏幕亮度」主屏图标）
-
-#### 测试（test）
-
-厂测与压测入口（`test_screen`），常见子项包括：自动测试（含电量计 / 无线充电 / 摄像头等）、压力测试（LVGL + 背景音乐 + 马达 + 摄像头循环）、硬件相关测试。日常用户可忽略。
 
 #### 11.1 聊天（chat）
 
@@ -823,10 +817,9 @@ idf.py -p /dev/ttyACM0 monitor
 
 板级启动后会创建后台任务，每秒输出 CPU 占用率、剩余内存与电池状态，便于性能与功耗分析。
 
-### 15.3 引脚测试与厂测
+### 15.3 系统信息
 
-- 主屏「**引脚测试**」：快速验证 GPIO 与外设连通性（`pin_test_screen`）。
-- 主屏「**测试**」：厂测入口（自动测试、压力测试、硬件测试等，`test_screen`）。
+系统信息页展示固件版本、芯片型号、MAC 地址和运行状态。
 
 ### 15.4 常见问题
 
