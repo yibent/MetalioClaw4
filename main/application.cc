@@ -11,6 +11,7 @@
 #include "settings.h"
 #include "lua_audio_backend.h"
 #include "lua_runtime.h"
+#include "lua_self_test.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -467,6 +468,9 @@ void Application::Start() {
     audio_service_.Initialize(codec);
     audio_service_.Start();
     RegisterLuaAudioBackend();
+    // The self-test task waits briefly before taking the Lua UI. Starting it
+    // here means it is independent of network/OTA success later in Start().
+    LuaSelfTest::Start();
 
     AudioServiceCallbacks callbacks;
     callbacks.on_send_queue_available = [this]() {

@@ -18,6 +18,10 @@ private:
     const audio_codec_gpio_if_t* gpio_if_ = nullptr;
 
     esp_codec_dev_handle_t dev_ = nullptr;
+    // esp_codec_dev_close() disables the I2S channels. Re-enable them before
+    // the next device open because esp_codec_dev_set_fmt() expects channels
+    // to be in the enabled state before it performs its internal disable.
+    bool channels_need_reenable_ = false;
     gpio_num_t pa_pin_ = GPIO_NUM_NC;
     bool pa_inverted_ = false;
     std::mutex data_if_mutex_;

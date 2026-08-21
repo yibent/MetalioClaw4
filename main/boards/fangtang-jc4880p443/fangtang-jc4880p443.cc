@@ -8,6 +8,7 @@
 #include "led/single_led.h"
 
 #include "esp_lcd_panel_ops.h"
+#include "esp_lcd_panel_interface.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_ldo_regulator.h"
 
@@ -25,6 +26,18 @@ static esp_lcd_panel_io_handle_t s_fangtang_panel_io = NULL;
 static esp_lcd_panel_handle_t s_fangtang_panel = NULL;
 static esp_lcd_touch_handle_t s_fangtang_touch = NULL;
 static esp_lcd_touch_io_gt911_config_t s_fangtang_touch_config = {};
+
+// The ST7701 MIPI panel is wired in its native 480x800 orientation and does
+// not implement the optional swap_xy command. LVGL's initial rotation setup
+// still calls the callback with false, which otherwise produces a noisy
+// ESP_ERR_NOT_SUPPORTED log even though the requested orientation is correct.
+static esp_err_t fangtang_noop_swap_xy(esp_lcd_panel_t* panel, bool swap_axes) {
+    (void)panel;
+    // Native orientation is a valid no-op. Preserve the unsupported result
+    // for an actual request to rotate the panel so callers cannot mistake it
+    // for a hardware rotation that this panel does not implement.
+    return swap_axes ? ESP_ERR_NOT_SUPPORTED : ESP_OK;
+}
 
 extern "C" i2c_master_bus_handle_t board_get_i2c_bus(void) {
     return s_fangtang_i2c_bus;
@@ -266,6 +279,7 @@ private:
         ESP_ERROR_CHECK(esp_lcd_new_panel_st7701(io, &lcd_dev_config, &disp_panel));
         ESP_ERROR_CHECK(esp_lcd_panel_reset(disp_panel));
         ESP_ERROR_CHECK(esp_lcd_panel_init(disp_panel));
+        disp_panel->swap_xy = fangtang_noop_swap_xy;
         s_fangtang_panel = disp_panel;
 
         display__ = new MipiLcdDisplay(io,disp_panel,LCD_H_RES,LCD_V_RES,

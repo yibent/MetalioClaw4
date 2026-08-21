@@ -997,6 +997,43 @@ static int l_poll_event(lua_State* state) {
     return 1;
 }
 
+/*
+ * Test-only event injection.  This does not expose LVGL objects or bypass the
+ * normal Lua queue; it only lets a self-test produce the same plain event that
+ * a touch callback would enqueue when no physical finger is available.
+ */
+static int l_test_inject_event(lua_State* state) {
+    lua_runtime_exec_context_t* exec = lua_runtime_get_context(state);
+    if (!exec || !(exec->capabilities & LUA_RUNTIME_CAP_UI_TEST))
+        return luaL_error(state, "UI test capability is not granted to this Lua job");
+    ui_context_t* context = get_context(state);
+    int object_id = (int)luaL_checkinteger(state, 1);
+    const char* type = luaL_checkstring(state, 2);
+    ui_object_t* entry = find_object(context, object_id);
+    if (!entry)
+        return luaL_error(state, "invalid UI object");
+    if (strcmp(type, "pressed") != 0 && strcmp(type, "moved") != 0 &&
+        strcmp(type, "released") != 0 && strcmp(type, "lost") != 0 &&
+        strcmp(type, "clicked") != 0 && strcmp(type, "changed") != 0)
+        return luaL_argerror(state, 2, "invalid event type");
+
+    ui_event_t event = {.object_id = entry->id};
+    strlcpy(event.event_id, entry->event_id, sizeof(event.event_id));
+    strlcpy(event.type, type, sizeof(event.type));
+    event.x = (int16_t)luaL_optinteger(state, 3, 0);
+    event.y = (int16_t)luaL_optinteger(state, 4, 0);
+    event.dx = (int16_t)luaL_optinteger(state, 5, 0);
+    event.dy = (int16_t)luaL_optinteger(state, 6, 0);
+    event.time_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    if (xQueueSend(context->events, &event, 0) != pdTRUE) {
+        ui_event_t discarded;
+        xQueueReceive(context->events, &discarded, 0);
+        if (xQueueSend(context->events, &event, 0) != pdTRUE)
+            return luaL_error(state, "UI event queue is full");
+    }
+    return 0;
+}
+
 static int close_context(lua_State* state) {
     ui_context_t* context = lua_touserdata(state, 1);
     if (!context || context->closed)
@@ -1048,6 +1085,7 @@ int luaopen_ui(lua_State* state) {
         {"update", l_update},
         {"delete", l_delete},
         {"poll_event", l_poll_event},
+        {"_test_inject_event", l_test_inject_event},
         {NULL, NULL},
     };
     luaL_newlib(state, functions);

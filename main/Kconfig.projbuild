@@ -1,5 +1,31 @@
 menu "Xiaozhi Assistant"
 
+config LUA_SELF_TEST_ON_BOOT
+    bool "Run Lua runtime self-test on boot"
+    default n
+    help
+        Start the unattended Lua API test after the application finishes booting.
+        Results are written to the serial log. Disable this option for normal
+        production firmware.
+
+config LUA_SELF_TEST_TIMEOUT_MS
+    int "Lua API suite timeout (ms)"
+    default 60000
+    range 10000 600000
+    depends on LUA_SELF_TEST_ON_BOOT
+    help
+        Timeout for the main unattended Lua API suite.
+
+config LUA_SELF_TEST_STRESS_ROUNDS
+    int "Virtual app soak-test rounds"
+    default 20
+    range 1 100
+    depends on LUA_SELF_TEST_ON_BOOT
+    help
+        Number of repeated lifecycle/frame/audio/event rounds used by the
+        virtual app scenarios. Twenty rounds take roughly 60-120 seconds depending
+        on the board and audio backend. Larger values scale job timeouts too.
+
 choice
     prompt "Flash Assets"
     default FLASH_DEFAULT_ASSETS

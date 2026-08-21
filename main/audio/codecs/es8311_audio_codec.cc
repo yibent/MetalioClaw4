@@ -69,6 +69,18 @@ Es8311AudioCodec::~Es8311AudioCodec() {
 
 void Es8311AudioCodec::UpdateDeviceState() {
     if ((input_enabled_ || output_enabled_) && dev_ == nullptr) {
+        if (channels_need_reenable_) {
+            // The previous power-down closed the codec device and disabled
+            // both channels. Ignore an already-enabled result defensively;
+            // this path is also used by boards that keep one channel alive.
+            esp_err_t tx_err = tx_handle_ ? i2s_channel_enable(tx_handle_) : ESP_OK;
+            esp_err_t rx_err = rx_handle_ ? i2s_channel_enable(rx_handle_) : ESP_OK;
+            if (tx_err != ESP_OK && tx_err != ESP_ERR_INVALID_STATE)
+                ESP_LOGW(TAG, "re-enable TX channel failed: %s", esp_err_to_name(tx_err));
+            if (rx_err != ESP_OK && rx_err != ESP_ERR_INVALID_STATE)
+                ESP_LOGW(TAG, "re-enable RX channel failed: %s", esp_err_to_name(rx_err));
+            channels_need_reenable_ = false;
+        }
         esp_codec_dev_cfg_t dev_cfg = {
             .dev_type = ESP_CODEC_DEV_TYPE_IN_OUT,
             .codec_if = codec_if_,
@@ -88,8 +100,12 @@ void Es8311AudioCodec::UpdateDeviceState() {
         ESP_ERROR_CHECK(esp_codec_dev_set_in_gain(dev_, input_gain_));
         ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, output_volume_));
     } else if (!input_enabled_ && !output_enabled_ && dev_ != nullptr) {
-        esp_codec_dev_close(dev_);
+        // Delete the closed wrapper instead of dropping the handle. The
+        // wrapper owns its volume curve and software-volume state, and a
+        // fresh open must start from a known data-interface state.
+        esp_codec_dev_delete(dev_);
         dev_ = nullptr;
+        channels_need_reenable_ = true;
     }
     if (pa_pin_ != GPIO_NUM_NC) {
         int level = output_enabled_ ? 1 : 0;

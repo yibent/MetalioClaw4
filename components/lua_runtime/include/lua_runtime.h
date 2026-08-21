@@ -14,6 +14,10 @@ extern "C" {
 typedef uint32_t lua_runtime_job_id_t;
 
 #define LUA_RUNTIME_CAP_UART (1u << 0)
+/* Grants the built-in UI event injector to an explicitly marked self-test job. */
+#define LUA_RUNTIME_CAP_UI_TEST (1u << 1)
+/* Mirrors Lua print() calls to ESP_LOG in addition to captured job output. */
+#define LUA_RUNTIME_CAP_LOG_OUTPUT (1u << 2)
 
 typedef enum {
     LUA_RUNTIME_JOB_QUEUED = 0,

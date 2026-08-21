@@ -125,15 +125,30 @@ static void lua_hook(lua_State *state, lua_Debug *debug) {
 static int lua_print(lua_State *state) {
     lua_runtime_exec_context_t *context = lua_runtime_get_context(state);
     int count = lua_gettop(state);
+    char log_line[256] = {};
+    size_t log_length = 0;
     for (int i = 1; i <= count; ++i) {
         size_t length = 0;
         const char *text = luaL_tolstring(state, i, &length);
-        if (i > 1)
+        if (i > 1) {
             lua_runtime_append_output(context, "\t", 1);
+            if (log_length + 1 < sizeof(log_line))
+                log_line[log_length++] = '\t';
+        }
         lua_runtime_append_output(context, text, length);
+        size_t room = sizeof(log_line) - 1 - log_length;
+        size_t copy = length < room ? length : room;
+        if (copy) {
+            memcpy(log_line + log_length, text, copy);
+            log_length += copy;
+        }
         lua_pop(state, 1);
     }
     lua_runtime_append_output(context, "\n", 1);
+    if (context && (context->capabilities & LUA_RUNTIME_CAP_LOG_OUTPUT)) {
+        ESP_LOGI(TAG, "[%s] %s%s", context->job_name ? context->job_name : "lua_job",
+                 log_line, log_length == sizeof(log_line) - 1 ? " [line truncated]" : "");
+    }
     return 0;
 }
 
@@ -439,6 +454,7 @@ static esp_err_t execute_job(runtime_job_t *job) {
         return ESP_ERR_NO_MEM;
     }
     lua_runtime_exec_context_t context = {
+        .job_name = job->name,
         .output = job->output,
         .output_size = LUA_RUNTIME_OUTPUT_SIZE,
         .deadline_us = job->timeout_ms ? esp_timer_get_time() + (int64_t)job->timeout_ms * 1000 : 0,

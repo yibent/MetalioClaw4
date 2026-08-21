@@ -2,11 +2,14 @@
 #include "lua_audio_backend.h"
 
 #include "application.h"
+#include "assets/lang_config.h"
 #include "audio_service.h"
 
 #include <atomic>
+#include <cstring>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string_view>
 
 namespace {
 
@@ -19,35 +22,48 @@ esp_err_t PlayLuaSound(const char* source, bool loop, uint8_t volume, uint32_t* 
     (void)user_ctx;
     if (!source || !handle)
         return ESP_ERR_INVALID_ARG;
-    FILE* file = fopen(source, "rb");
-    if (!file)
+    std::string_view sound;
+    if (strcmp(source, "builtin:success") == 0) {
+        sound = Lang::Sounds::OGG_SUCCESS;
+    }
+
+    FILE* file = sound.empty() ? fopen(source, "rb") : nullptr;
+    if (!sound.empty()) {
+        // Built-in sounds live in flash and remain valid for the duration of playback.
+    } else if (!file) {
         return ESP_ERR_NOT_FOUND;
-    if (fseek(file, 0, SEEK_END) != 0) {
+    }
+    if (file && fseek(file, 0, SEEK_END) != 0) {
         fclose(file);
         return ESP_FAIL;
     }
-    long length = ftell(file);
-    if (length <= 0 || (size_t)length > kMaxLuaSoundBytes) {
-        fclose(file);
+    long length = file ? ftell(file) : static_cast<long>(sound.size());
+    if (length <= 0 || static_cast<size_t>(length) > kMaxLuaSoundBytes) {
+        if (file)
+            fclose(file);
         return ESP_ERR_INVALID_SIZE;
     }
-    rewind(file);
-    auto* data = static_cast<char*>(malloc((size_t)length));
-    if (!data) {
+    char* data = nullptr;
+    if (file) {
+        rewind(file);
+        data = static_cast<char*>(malloc(static_cast<size_t>(length)));
+        if (!data) {
+            fclose(file);
+            return ESP_ERR_NO_MEM;
+        }
+        size_t read = fread(data, 1, static_cast<size_t>(length), file);
         fclose(file);
-        return ESP_ERR_NO_MEM;
-    }
-    size_t read = fread(data, 1, (size_t)length, file);
-    fclose(file);
-    if (read != (size_t)length) {
-        free(data);
-        return ESP_FAIL;
+        if (read != static_cast<size_t>(length)) {
+            free(data);
+            return ESP_FAIL;
+        }
+        sound = std::string_view(data, read);
     }
     uint32_t sound_handle = s_next_handle.fetch_add(1);
     if (sound_handle == 0)
         sound_handle = s_next_handle.fetch_add(1);
     bool queued = Application::GetInstance().GetAudioService().PlaySoundEffect(
-        std::string_view(data, read), sound_handle, volume, loop);
+        sound, sound_handle, volume, loop);
     free(data);
     if (!queued)
         return ESP_ERR_INVALID_RESPONSE;

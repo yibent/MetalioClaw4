@@ -4,6 +4,7 @@
 #include "lua_runtime.h"
 
 typedef struct {
+    const char* job_name;
     char* output;
     size_t output_size;
     size_t output_length;
