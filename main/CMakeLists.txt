@@ -19,15 +19,9 @@ set(SOURCES "audio/audio_codec.cc"
             "display/touch_feed.cc"
             "display/font/font_puhui_number_50_4.c"
             "display/font/font_puhui_number_120_4.c"
-            "display/font/font_agent_small_18.c"
-            "display/font/font_agent_medium_28.c"
-            "display/font/font_agent_large_56.c"
             "display/font/font_agent_small_bold_18.c"
             "display/font/font_agent_medium_bold_28.c"
             "display/font/font_agent_large_bold_56.c"
-            "display/font/font_agent_emoji_18.c"
-            "display/font/font_agent_emoji_28.c"
-            "display/font/font_agent_emoji_56.c"
             "display/font/font_agent_home_name_bold_35.c"
             "display/font/font_agent_home_number_bold_70.c"
             "display/ui_dispatcher.cc"
@@ -93,7 +87,7 @@ list(APPEND INCLUDE_DIRS ${AGENT_UI_INCLUDE_DIRS})
 # Add board common files
 file(GLOB BOARD_COMMON_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/boards/common/*.cc)
 if(CONFIG_BOARD_TYPE_FANGTANG_JC4880P443)
-    list(FILTER BOARD_COMMON_SOURCES EXCLUDE REGEX "/(bq27220_gauge|cx25601n|dual_network_board|nt26_board|uart_eth_modem)\\.cc$")
+    list(FILTER BOARD_COMMON_SOURCES EXCLUDE REGEX "/(bq27220_gauge|cx25601n)\\.cc$")
 endif()
 list(APPEND SOURCES ${BOARD_COMMON_SOURCES})
 list(APPEND INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/boards/common)
@@ -286,6 +280,7 @@ idf_component_register(SRCS ${SOURCES}
                                   spi_flash
                                   efuse
                                   usb
+                                  esp_driver_ppa
                     WHOLE_ARCHIVE
                     )
 
