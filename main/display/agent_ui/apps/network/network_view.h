@@ -25,6 +25,7 @@ private:
     static void OnSavedItem(lv_event_t* event);
     static void OnNearbyItem(lv_event_t* event);
     static void OnPasswordConnect(lv_event_t* event);
+    static void OnPasswordCancel(lv_event_t* event);
     static void OnFailureDismiss(lv_timer_t* timer);
 
     void Emit(const Intent& intent);

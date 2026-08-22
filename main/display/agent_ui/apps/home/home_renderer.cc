@@ -391,35 +391,55 @@ void ShowNetworkGuard(HomeState* state) {
         return;
     }
     const auto& colors = Theme::Get().colors();
+    const bool portrait = metrics::kDisplayHeight > metrics::kDisplayWidth;
+    const int margin = metrics::kPagePadding;
+    const int card_w =
+        std::min(560, metrics::kDisplayWidth - margin * 2);
+    const int pad = portrait ? 18 : 28;
+    const int gap = portrait ? 10 : 16;
+    const lv_font_t* title_font = fonts::MediumBold();
+    const lv_font_t* body_font =
+        portrait ? fonts::SmallBold() : fonts::Medium();
+    const int title_h = title_font->line_height;
+    const int body_h = body_font->line_height * 3 + 8;
+    const int btn_h = portrait ? 44 : 58;
+    const int btn_w = portrait ? 120 : 160;
+    const int card_h = pad * 2 + title_h + gap + body_h + gap + btn_h;
+
     lv_obj_t* overlay = ui_components::CreateModalOverlay(state->root);
-    lv_obj_t* card = ui_components::CreateModalSurface(overlay, 560, 286);
+    lv_obj_t* card =
+        ui_components::CreateModalSurface(overlay, card_w, card_h);
     if (overlay == nullptr || card == nullptr) return;
     state->network_guard_overlay = overlay;
     lv_obj_center(card);
+    lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
 
     lv_obj_t* icon = lv_label_create(card);
     lv_label_set_text(icon, FONT_AWESOME_WIFI_SLASH);
     lv_obj_set_style_text_font(icon, fonts::IconLarge(), LV_PART_MAIN);
     lv_obj_set_style_text_color(icon, lv_color_hex(colors.warning), LV_PART_MAIN);
-    lv_obj_set_pos(icon, 28, 34);
+    lv_obj_align(icon, LV_ALIGN_TOP_LEFT, 0, 0);
 
+    const int text_x = 30 + 16;
     lv_obj_t* title = lv_label_create(card);
     lv_label_set_text(title, "Wi-Fi 未连接");
-    lv_obj_set_style_text_font(title, fonts::MediumBold(), LV_PART_MAIN);
+    lv_obj_set_width(title, card_w - pad * 2 - text_x);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(title, title_font, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(colors.text), LV_PART_MAIN);
-    lv_obj_set_pos(title, 108, 34);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, text_x, 2);
 
     lv_obj_t* detail = lv_label_create(card);
     lv_label_set_text(detail, "此应用需要网络连接，请先在设置中连接 Wi-Fi。");
-    lv_obj_set_size(detail, 424, 84);
+    lv_obj_set_width(detail, card_w - pad * 2);
     lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(detail, fonts::Medium(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(detail, body_font, LV_PART_MAIN);
     lv_obj_set_style_text_color(detail, lv_color_hex(colors.muted), LV_PART_MAIN);
-    lv_obj_set_pos(detail, 108, 84);
+    lv_obj_align(detail, LV_ALIGN_TOP_LEFT, 0, title_h + gap);
 
     lv_obj_t* close = ui_components::CreateButton(card);
-    lv_obj_set_size(close, 160, 58);
-    lv_obj_align(close, LV_ALIGN_BOTTOM_RIGHT, -28, -24);
+    lv_obj_set_size(close, btn_w, btn_h);
+    lv_obj_align(close, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
     lv_obj_set_style_bg_color(close, lv_color_hex(colors.accent), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(close, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(close, 12, LV_PART_MAIN);

@@ -32,6 +32,8 @@ void Controller::HandleLifecycle(Lifecycle lifecycle) {
             Dispatch({.type = CommandType::Stop});
             if (lifecycle == Lifecycle::Unload) {
                 state_ = {};
+                // Screen is being deleted; do not render into dying widgets.
+                return;
             }
             break;
     }

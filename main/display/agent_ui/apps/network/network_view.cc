@@ -96,7 +96,7 @@ void View::RenderDialog(const ViewState& next) {
             case Dialog::Password:
                 pending_ssid_ = next.dialog_ssid;
                 dialogs_.OpenPassword(next.dialog_ssid.c_str(), OnPasswordConnect,
-                                      this);
+                                      OnPasswordCancel, this);
                 break;
             case Dialog::Connecting:
                 dialogs_.OpenConnecting(next.dialog_ssid.c_str());
@@ -177,6 +177,11 @@ void View::OnPasswordConnect(lv_event_t* event) {
     const char* password = self->dialogs_.Password();
     self->Emit(Intent::SubmitPassword(
         self->pending_ssid_, password != nullptr ? password : ""));
+}
+
+void View::OnPasswordCancel(lv_event_t* event) {
+    auto* self = static_cast<View*>(lv_event_get_user_data(event));
+    if (self != nullptr) self->Emit(Intent::DismissStatus());
 }
 
 void View::OnFailureDismiss(lv_timer_t* timer) {

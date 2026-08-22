@@ -16,7 +16,7 @@ public:
     const char* Password() const;
 
     void OpenPassword(const char* ssid, lv_event_cb_t connect_callback,
-                      void* user_data = nullptr);
+                      lv_event_cb_t cancel_callback, void* user_data = nullptr);
     void ClosePassword();
     void CloseStatus();
     void OpenConnecting(const char* ssid);

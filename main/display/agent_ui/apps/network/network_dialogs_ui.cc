@@ -123,23 +123,38 @@ lv_obj_t* View::CreateStatusCard() {
 }
 
 void View::OpenPassword(const char* ssid, lv_event_cb_t connect_callback,
-                        void* user_data) {
+                        lv_event_cb_t cancel_callback, void* user_data) {
     ClosePassword();
     password_overlay_ = CreateOverlay();
     if (password_overlay_ == nullptr) return;
     const auto& colors = Theme::Get().colors();
-    const int side = metrics::Scale(24);
-    const int pad = metrics::Scale(20);
+    const bool portrait = metrics::kDisplayHeight > metrics::kDisplayWidth;
+    const lv_font_t* title_font = fonts::MediumBold();
+    const lv_font_t* body_font =
+        portrait ? fonts::SmallBold() : fonts::Medium();
+    const int side = std::max(16, metrics::Scale(24));
+    const int pad = std::max(14, metrics::Scale(20));
+    const int gap = portrait ? 8 : 10;
     const int card_w = metrics::kDisplayWidth - side * 2;
-    const int field_y = metrics::Scale(82);
-    const int field_h = std::max(metrics::Scale(58), 48);
-    const int btn_w = std::max(metrics::Scale(120), 96);
-    const int btn_h = std::max(metrics::Scale(50), 44);
-    const int btn_gap = metrics::Scale(12);
-    const int card_h = pad * 2 + field_y + field_h + metrics::Scale(16) + btn_h;
+    const int inner_w = card_w - pad * 2;
+    const int title_h = static_cast<int>(title_font->line_height);
+    const int hint_h = static_cast<int>(body_font->line_height);
+    const int field_h = std::max(hint_h + 22, portrait ? 44 : 58);
+    const int check_h = hint_h + 6;
+    const int btn_gap = std::max(8, metrics::Scale(12));
+    const int btn_h = std::max(40, metrics::Scale(50));
+    const int btn_w = (inner_w - btn_gap) / 2;
+    const int hint_y = title_h + gap;
+    const int field_y = hint_y + hint_h + gap;
+    const int check_y = field_y + field_h + gap;
+    const int btn_y = check_y + check_h + gap;
+    const int card_h = pad * 2 + btn_y + btn_h;
     const int keyboard_h = metrics::Scale(320);
-    int card_y = metrics::kDisplayHeight - keyboard_h - card_h - metrics::Scale(12);
-    if (card_y < metrics::Scale(56)) card_y = metrics::Scale(56);
+    int card_y =
+        metrics::kDisplayHeight - keyboard_h - card_h - metrics::Scale(12);
+    if (card_y < metrics::kStatusBarHeight + 8) {
+        card_y = metrics::kStatusBarHeight + 8;
+    }
 
     lv_obj_t* card = ui_components::CreateModalSurface(
         password_overlay_, card_w, card_h);
@@ -149,18 +164,23 @@ void View::OpenPassword(const char* ssid, lv_event_cb_t connect_callback,
     char title[128];
     std::snprintf(title, sizeof(title), I18n::T("连接到: %s"),
                   ssid != nullptr ? ssid : "");
-    lv_obj_t* heading = AddLabel(card, title, fonts::MediumBold(), colors.text);
+    lv_obj_t* heading = AddLabel(card, title, title_font, colors.text);
     lv_obj_set_width(heading, LV_PCT(100));
     lv_label_set_long_mode(heading, LV_LABEL_LONG_DOT);
     lv_obj_align(heading, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    lv_obj_t* hint = AddLabel(card, I18n::T("输入 WiFi 密码"), fonts::Medium(),
+    lv_obj_t* hint = AddLabel(card, I18n::T("输入 WiFi 密码"), body_font,
                               colors.muted);
-    lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 0, metrics::Scale(42));
+    lv_obj_set_width(hint, LV_PCT(100));
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
+    lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 0, hint_y);
 
     password_textarea_ = lv_textarea_create(card);
     lv_obj_set_size(password_textarea_, LV_PCT(100), field_h);
     StyleTextInput(password_textarea_);
+    lv_obj_set_style_text_font(password_textarea_, body_font, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(password_textarea_, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(password_textarea_, 10, LV_PART_MAIN);
     lv_obj_align(password_textarea_, LV_ALIGN_TOP_LEFT, 0, field_y);
     lv_textarea_set_one_line(password_textarea_, true);
     lv_textarea_set_password_mode(password_textarea_, true);
@@ -168,30 +188,35 @@ void View::OpenPassword(const char* ssid, lv_event_cb_t connect_callback,
 
     lv_obj_t* show = lv_checkbox_create(card);
     lv_checkbox_set_text(show, I18n::T("显示密码"));
-    lv_obj_set_style_text_font(show, fonts::Medium(), LV_PART_MAIN);
-    lv_obj_align(show, LV_ALIGN_BOTTOM_LEFT, 0, -6);
+    lv_obj_set_style_text_font(show, body_font, LV_PART_MAIN);
+    lv_obj_set_style_text_color(show, lv_color_hex(colors.text), LV_PART_MAIN);
+    lv_obj_align(show, LV_ALIGN_TOP_LEFT, 0, check_y);
     lv_obj_add_event_cb(show, OnShowPassword, LV_EVENT_VALUE_CHANGED, this);
     IgnoreSwipeBack(show, true);
 
     lv_obj_t* cancel = ui_components::CreateButton(card);
     lv_obj_set_size(cancel, btn_w, btn_h);
-    lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -(btn_w + btn_gap), 0);
+    lv_obj_align(cancel, LV_ALIGN_TOP_LEFT, 0, btn_y);
     lv_obj_set_style_bg_color(cancel, lv_color_hex(colors.raised), LV_PART_MAIN);
     lv_obj_set_style_radius(cancel, metrics::Scale(12), LV_PART_MAIN);
-    lv_obj_add_event_cb(cancel, OnCancelPassword, LV_EVENT_CLICKED, this);
-    lv_obj_t* cancel_label = AddLabel(cancel, I18n::T("取消"), fonts::Medium(),
+    if (cancel_callback != nullptr) {
+        lv_obj_add_event_cb(cancel, cancel_callback, LV_EVENT_CLICKED, user_data);
+    } else {
+        lv_obj_add_event_cb(cancel, OnCancelPassword, LV_EVENT_CLICKED, this);
+    }
+    lv_obj_t* cancel_label = AddLabel(cancel, I18n::T("取消"), body_font,
                                       colors.text);
     lv_obj_center(cancel_label);
 
     lv_obj_t* connect = ui_components::CreateButton(card);
     lv_obj_set_size(connect, btn_w, btn_h);
-    lv_obj_align(connect, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_align(connect, LV_ALIGN_TOP_RIGHT, 0, btn_y);
     lv_obj_set_style_bg_color(connect, lv_color_hex(colors.accent), LV_PART_MAIN);
     lv_obj_set_style_radius(connect, metrics::Scale(12), LV_PART_MAIN);
     if (connect_callback != nullptr) {
         lv_obj_add_event_cb(connect, connect_callback, LV_EVENT_CLICKED, user_data);
     }
-    lv_obj_t* connect_label = AddLabel(connect, I18n::T("连接"), fonts::Medium(),
+    lv_obj_t* connect_label = AddLabel(connect, I18n::T("连接"), body_font,
                                        colors.accent_ink);
     lv_obj_center(connect_label);
     Keyboard::Get().Bind(password_textarea_, "Wi-Fi 密码");
@@ -213,9 +238,10 @@ void View::OnCancelPassword(lv_event_t* event) {
 
 void View::ClosePassword() {
     Keyboard::Get().Hide();
-    if (password_overlay_ != nullptr) lv_obj_delete(password_overlay_);
+    lv_obj_t* overlay = password_overlay_;
     password_overlay_ = nullptr;
     password_textarea_ = nullptr;
+    if (overlay != nullptr) lv_obj_delete_async(overlay);
 }
 
 void View::CloseStatus() {

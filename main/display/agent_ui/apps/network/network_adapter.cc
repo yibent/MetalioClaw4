@@ -332,6 +332,22 @@ struct Adapter::Impl {
         return true;
     }
 
+    static void RestoreStationTask(void*) {
+        WifiManager::GetInstance().StartStation();
+        vTaskDelete(nullptr);
+    }
+
+    void RestoreWifiStationAsync() {
+        if (!wifi_station_was_active) return;
+        wifi_station_was_active = false;
+        // Stop() runs on the LVGL thread during screen delete. StartStation()
+        // kicks off a scan and must not share that stack with AFE bring-up.
+        if (xTaskCreate(RestoreStationTask, "wifi_restore", 4096, nullptr, 5,
+                        nullptr) != pdPASS) {
+            WifiManager::GetInstance().StartStation();
+        }
+    }
+
     void TeardownWifi() {
         if (!wifi_initialized.exchange(false, std::memory_order_acq_rel)) return;
         esp_wifi_scan_stop();
@@ -345,18 +361,12 @@ struct Adapter::Impl {
         // 会因 ESP_ERR_WIFI_NOT_INIT abort。
         if (borrowed_wifi) {
             borrowed_wifi = false;
-            if (wifi_station_was_active) {
-                WifiManager::GetInstance().StartStation();
-            }
-            wifi_station_was_active = false;
+            RestoreWifiStationAsync();
             return;
         }
 
         esp_wifi_deinit();
-        if (wifi_station_was_active) {
-            WifiManager::GetInstance().StartStation();
-        }
-        wifi_station_was_active = false;
+        RestoreWifiStationAsync();
     }
 
     static void ScanTaskEntry(void* arg) {

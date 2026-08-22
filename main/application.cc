@@ -510,11 +510,13 @@ void Application::Start() {
         }
     }
 
-    // Start the main event loop task with priority 3
+    // Start the main event loop task with priority 3.
+    // 16KB: AFE/protocol work used to overflow the original 8KB stack when
+    // returning to Home after a Wi-Fi scan restored the station.
     xTaskCreate([](void* arg) {
         ((Application*)arg)->MainEventLoop();
         vTaskDelete(NULL);
-    }, "main_event_loop", 2048 * 4, this, 3, &main_event_loop_task_handle_);
+    }, "main_event_loop", 2048 * 8, this, 3, &main_event_loop_task_handle_);
 
     /* Start the clock timer to update the status bar */
     esp_timer_start_periodic(clock_timer_handle_, 1000000);
@@ -1188,12 +1190,38 @@ bool Application::TryEnableWakeWordForVoiceUi() {
         return false;
     }
 
-    audio_service_.EnableWakeWordDetection(true);
-    if (!audio_service_.IsWakeWordEngineReady()) {
-        ESP_LOGW(TAG, "Wake word init failed, will retry");
-        return false;
+    // create_from_config uses more stack than main_event_loop can spare.
+    StartWakeWordInitWorker();
+    return false;
+}
+
+void Application::StartWakeWordInitWorker() {
+    bool expected = false;
+    if (!wake_word_init_in_progress_.compare_exchange_strong(expected, true)) {
+        return;
     }
-    return true;
+    const BaseType_t created = xTaskCreate(
+        [](void* arg) {
+            auto* app = static_cast<Application*>(arg);
+            ESP_LOGI(TAG, "Wake word init worker start");
+            if (app->voice_ui_desired_) {
+                app->GetAudioService().EnableWakeWordDetection(true);
+            }
+            app->wake_word_init_in_progress_.store(false);
+            const uint32_t epoch = app->voice_ui_epoch_;
+            app->Schedule([app, epoch]() {
+                if (!app->voice_ui_desired_ || app->voice_ui_epoch_ != epoch) {
+                    return;
+                }
+                app->ApplyVoiceUiStart();
+            });
+            vTaskDelete(nullptr);
+        },
+        "ww_init", 2048 * 8, this, 4, nullptr);
+    if (created != pdPASS) {
+        wake_word_init_in_progress_.store(false);
+        ESP_LOGW(TAG, "Failed to start wake word init worker");
+    }
 }
 
 void Application::NotifyUiTransitionFinished() {

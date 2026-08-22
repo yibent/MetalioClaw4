@@ -130,9 +130,11 @@ private:
     std::atomic<bool> abort_voice_session_{false};
     // 非 0：在此时间之前禁止 create_from_config（等旧屏释放）。
     int64_t voice_ui_engine_not_before_us_ = 0;
+    std::atomic<bool> wake_word_init_in_progress_{false};
 
     void SyncVoiceUiSession();
     bool HeapOkForWakeWordCreate() const;
+    void StartWakeWordInitWorker();
     void TearDownVoiceAudioPaths(bool release_wake_word);
     void SoftStopVoiceAudioPaths();
     void ParkVoiceUiProtocol();
