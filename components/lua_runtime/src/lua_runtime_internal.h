@@ -26,5 +26,5 @@ int luaopen_http(lua_State* state);
 esp_err_t lua_http_init(void);
 void lua_http_deinit(void);
 int luaopen_camera(lua_State* state);
-int luaopen_speech(lua_State* state);
+int luaopen_alert(lua_State* state);
 int luaopen_device(lua_State* state);

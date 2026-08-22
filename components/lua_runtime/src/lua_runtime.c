@@ -397,7 +397,7 @@ static void open_modules(lua_State *state) {
     lua_pop(state, 1);
     luaL_requiref(state, "camera", luaopen_camera, 1);
     lua_pop(state, 1);
-    luaL_requiref(state, "speech", luaopen_speech, 1);
+    luaL_requiref(state, "alert", luaopen_alert, 1);
     lua_pop(state, 1);
     luaL_requiref(state, "device", luaopen_device, 1);
     lua_pop(state, 1);

@@ -72,7 +72,7 @@ void SetVibrateDutyPct(int pct) {
     ledc_update_duty(kLedcMode, kLedcChannel);
 }
 
-esp_err_t SayText(const char* text, void* user_ctx) {
+esp_err_t ShowAlert(const char* text, void* user_ctx) {
     (void)user_ctx;
     std::string message = text ? text : "";
     Application::GetInstance().Schedule([message]() {
@@ -131,8 +131,8 @@ esp_err_t Notify(const char* text, void* user_ctx) {
 }  // namespace
 
 void RegisterLuaBoardBackend() {
-    if (lua_runtime_set_speech_backend(SayText, nullptr) != ESP_OK)
-        ESP_LOGW(TAG, "failed to register speech backend");
+    if (lua_runtime_set_alert_backend(ShowAlert, nullptr) != ESP_OK)
+        ESP_LOGW(TAG, "failed to register alert backend");
     if (lua_runtime_set_device_backend(SetBrightness, SetVolume, Vibrate, Notify, nullptr) !=
         ESP_OK)
         ESP_LOGW(TAG, "failed to register device backend");

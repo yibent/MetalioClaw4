@@ -15,7 +15,7 @@ LuaSelfTest: CASE_SKIP name=uart_loopback ...
 LuaSelfTest: ===== unattended Lua self-test PASS: failed=0 skipped=1 ... =====
 ```
 
-The suite covers the public `runtime`, `ui`, `audio`, `http`, `camera`, `speech`, and `device` Lua modules,
+The suite covers the public `runtime`, `ui`, `audio`, `http`, `camera`, `alert`, and `device` Lua modules,
 JSON arguments, calling a `main` entry function and encoding its return value
 as JSON, standard Lua libraries, timeout/cancellation, job output
 truncation, UI object creation/update/delete, synthetic touch queue events,

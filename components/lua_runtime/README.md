@@ -115,14 +115,14 @@ port:close()
 `read()` and `poll_event()` periodically check runtime cancellation and timeout.
 UART handles are exclusive and automatically released when their Lua VM closes.
 
-The built-in `camera`, `speech`, and `device` modules are application-backed:
+The built-in `camera`, `alert`, and `device` modules are application-backed:
 
 ```lua
 local camera = require("camera")
 local text, err = camera.explain("图里有什么")
 
-local speech = require("speech")
-speech.say("计时结束")
+local alert = require("alert")
+alert.show("计时结束")
 
 local device = require("device")
 device.set_brightness(80)
@@ -173,7 +173,7 @@ See `examples/http_demo.lua` for a complete GET example.
 The desktop app「远程脚本」uses this runtime over a WebSocket protocol
 compatible with CubeMax `/api/device-ws/v1` (`main/LUA_AGENT.md`).
 
-Device Lua modules for workflow nodes: `camera.explain`, `speech.say`,
+Device Lua modules for workflow nodes: `camera.explain`, `alert.show`,
 `device.set_brightness` / `set_volume` / `vibrate` / `notify`.
 
 The built-in `ui` module currently provides:

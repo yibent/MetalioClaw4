@@ -266,7 +266,7 @@ cJSON* BuildHelloDevice() {
     cJSON_AddItemToArray(caps, cJSON_CreateString("ui"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("audio"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("http"));
-    cJSON_AddItemToArray(caps, cJSON_CreateString("speech"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("alert"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("tts"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("device"));
     if (board.GetCamera() != nullptr)
@@ -319,7 +319,7 @@ bool SendHello() {
     cJSON_AddItemToArray(caps, cJSON_CreateString("ui"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("audio"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("http"));
-    cJSON_AddItemToArray(caps, cJSON_CreateString("speech"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("alert"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("tts"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("device"));
     if (board.GetCamera() != nullptr)

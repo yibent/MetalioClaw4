@@ -97,7 +97,7 @@ wss://max.sh.creativone.cn/api/device-ws/v1
       "max_code_bytes": 65536,
       "max_output_bytes": 4096,
       "max_result_bytes": 8192,
-      "capabilities": ["lua", "ui", "audio", "http", "speech", "tts", "device", "camera"]
+      "capabilities": ["lua", "ui", "audio", "http", "alert", "tts", "device", "camera"]
     }
   },
   "data": {
@@ -106,7 +106,7 @@ wss://max.sh.creativone.cn/api/device-ws/v1
     "boot_id": "<boot uuid>",
     "firmware_version": "1.2.3",
     "lua_runtime": "claw4",
-    "capabilities": ["lua", "ui", "audio", "http", "speech", "tts", "device", "camera"],
+    "capabilities": ["lua", "ui", "audio", "http", "alert", "tts", "device", "camera"],
     "limits": {
       "max_script_bytes": 65536,
       "max_params_bytes": 16384,
@@ -127,7 +127,7 @@ wss://max.sh.creativone.cn/api/device-ws/v1
 
 `system` 是设备已有的整机信息 JSON（分区、芯片、显示等），便于调试。CubeMax 用 `data.device_id`（Board UUID）登记设备。`protocol: "lua-agent"` 用来让 CubeMax 走 LAP，而不是旧的分片协议。
 
-当前固件会上报的能力：`lua`、`ui`、`audio`、`http`、`speech`、`tts`、`device`，有摄像头时还有 `camera`。`uart` 运行时存在，但本板未注册 UART 口，不要默认下发需要串口的脚本。`ui` / `audio` / `speech` / `device` 始终可用，不必在 `run.capabilities` 里声明；`http` 默认打开；`camera` 必须在对应 `run` 里声明。`tts` 表示设备能直接接收 `speak` 音频并播放。
+当前固件会上报的能力：`lua`、`ui`、`audio`、`http`、`alert`、`tts`、`device`，有摄像头时还有 `camera`。`uart` 运行时存在，但本板未注册 UART 口，不要默认下发需要串口的脚本。`ui` / `audio` / `alert` / `device` 始终可用，不必在 `run.capabilities` 里声明；`http` 默认打开；`camera` 必须在对应 `run` 里声明。`tts` 表示设备能直接接收 `speak` 音频并播放。`alert` 是屏幕播报提示（`alert.show`），不是 TTS。
 
 ### 3.2 `hello_ok`（服务端 → 设备，可选）
 
@@ -164,7 +164,7 @@ wss://max.sh.creativone.cn/api/device-ws/v1
 | `entry` | 否 | 入口函数名，默认 `"main"` |
 | `args` | 否 | 任意 JSON。会变成 Lua 全局 `args`，并作为 `main` 的第一个参数 |
 | `timeout_ms` | 否 | 超时。省略 = 30000。`0` = 不超时。非 0 时上限 600000（10 分钟） |
-| `capabilities` | 否 | 字符串数组。省略时默认 `http` + `log`。允许值：`http`、`uart`、`log`、`camera`。`ui` / `audio` / `speech` / `device` 始终可用，不必声明 |
+| `capabilities` | 否 | 字符串数组。省略时默认 `http` + `log`。允许值：`http`、`uart`、`log`、`camera`。`ui` / `audio` / `alert` / `device` 始终可用，不必声明 |
 
 执行顺序：
 
@@ -413,8 +413,8 @@ CubeMax「编程 / 应用 / 智能交互」节点会下发下面这些脚本 API
 local camera = require("camera")
 local text, err = camera.explain("图里有什么")
 
-local speech = require("speech")
-speech.say("计时结束")
+local alert = require("alert")
+alert.show("计时结束")
 
 local device = require("device")
 device.set_brightness(80)  -- 0-100，背光

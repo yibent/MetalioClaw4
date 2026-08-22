@@ -120,7 +120,7 @@ typedef esp_err_t (*lua_runtime_http_request_callback_t)(const lua_runtime_http_
 
 typedef esp_err_t (*lua_runtime_camera_explain_callback_t)(const char* question, char* output,
                                                            size_t output_size, void* user_ctx);
-typedef esp_err_t (*lua_runtime_speech_say_callback_t)(const char* text, void* user_ctx);
+typedef esp_err_t (*lua_runtime_alert_show_callback_t)(const char* text, void* user_ctx);
 typedef esp_err_t (*lua_runtime_device_set_int_callback_t)(int value, void* user_ctx);
 typedef esp_err_t (*lua_runtime_device_vibrate_callback_t)(uint32_t duration_ms, void* user_ctx);
 typedef esp_err_t (*lua_runtime_device_notify_callback_t)(const char* text, void* user_ctx);
@@ -148,7 +148,7 @@ esp_err_t lua_runtime_set_http_backend(lua_runtime_http_request_callback_t reque
 void lua_runtime_http_response_free(lua_runtime_http_response_t* res);
 esp_err_t lua_runtime_set_camera_backend(lua_runtime_camera_explain_callback_t explain,
                                          void* user_ctx);
-esp_err_t lua_runtime_set_speech_backend(lua_runtime_speech_say_callback_t say, void* user_ctx);
+esp_err_t lua_runtime_set_alert_backend(lua_runtime_alert_show_callback_t show, void* user_ctx);
 esp_err_t lua_runtime_set_device_backend(lua_runtime_device_set_int_callback_t set_brightness,
                                          lua_runtime_device_set_int_callback_t set_volume,
                                          lua_runtime_device_vibrate_callback_t vibrate,

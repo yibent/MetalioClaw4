@@ -4,19 +4,19 @@
 #include "lauxlib.h"
 #include "lua_runtime_internal.h"
 
-static lua_runtime_speech_say_callback_t s_say;
+static lua_runtime_alert_show_callback_t s_show;
 static lua_runtime_device_set_int_callback_t s_set_brightness;
 static lua_runtime_device_set_int_callback_t s_set_volume;
 static lua_runtime_device_vibrate_callback_t s_vibrate;
 static lua_runtime_device_notify_callback_t s_notify;
-static void* s_speech_ctx;
+static void* s_alert_ctx;
 static void* s_device_ctx;
 
-esp_err_t lua_runtime_set_speech_backend(lua_runtime_speech_say_callback_t say, void* user_ctx) {
-    if (!say)
+esp_err_t lua_runtime_set_alert_backend(lua_runtime_alert_show_callback_t show, void* user_ctx) {
+    if (!show)
         return ESP_ERR_INVALID_ARG;
-    s_say = say;
-    s_speech_ctx = user_ctx;
+    s_show = show;
+    s_alert_ctx = user_ctx;
     return ESP_OK;
 }
 
@@ -35,14 +35,14 @@ esp_err_t lua_runtime_set_device_backend(lua_runtime_device_set_int_callback_t s
     return ESP_OK;
 }
 
-static int l_say(lua_State* state) {
+static int l_show(lua_State* state) {
     lua_runtime_check_abort(state);
     const char* text = luaL_optstring(state, 1, "");
-    if (!s_say)
-        return luaL_error(state, "speech backend is not registered");
-    esp_err_t err = s_say(text, s_speech_ctx);
+    if (!s_show)
+        return luaL_error(state, "alert backend is not registered");
+    esp_err_t err = s_show(text, s_alert_ctx);
     if (err != ESP_OK)
-        return luaL_error(state, "speech.say failed: %s", esp_err_to_name(err));
+        return luaL_error(state, "alert.show failed: %s", esp_err_to_name(err));
     return 0;
 }
 
@@ -94,9 +94,9 @@ static int l_notify(lua_State* state) {
     return 0;
 }
 
-int luaopen_speech(lua_State* state) {
+int luaopen_alert(lua_State* state) {
     static const luaL_Reg functions[] = {
-        {"say", l_say},
+        {"show", l_show},
         {NULL, NULL},
     };
     luaL_newlib(state, functions);
