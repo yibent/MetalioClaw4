@@ -49,13 +49,19 @@ constexpr int kMessageWidth = metrics::Scale(540);
 constexpr int kMessageLineSpace = metrics::Scale(10);
 constexpr int kMessageFirstScrollDelayMs = 1600;
 constexpr int kMessageScrollPeriodMs = 1000;
-constexpr int kCarouselHeight = metrics::Scale(208);
+constexpr int kCarouselItemWidth = metrics::Scale(168);
+constexpr int kCarouselItemHeight = metrics::Scale(178);
+// Portrait 480x800: taller U than the width-scaled 720 curve, and enough
+// track height so (height - item) does not clip the arc.
+constexpr int kCarouselCurveBase = kPortraitHome ? 38 : metrics::Scale(49);
+constexpr int kCarouselCurveDrop = kPortraitHome ? 34 : metrics::Scale(42);
+constexpr int kCarouselHeight =
+    kPortraitHome ? kCarouselItemHeight + kCarouselCurveBase + 3
+                  : metrics::Scale(208);
 constexpr int kCarouselIdleLift = kPortraitHome ? 50 : 0;
 constexpr int kCarouselTop =
     metrics::kDisplayHeight - kCarouselHeight - kCarouselIdleLift;
 constexpr int kCarouselStep = metrics::Scale(180);
-constexpr int kCarouselItemWidth = metrics::Scale(168);
-constexpr int kCarouselItemHeight = metrics::Scale(178);
 constexpr int kCarouselFocusX =
     (metrics::kDisplayWidth - kCarouselItemWidth) / 2;
 constexpr int kCarouselNameInset = metrics::Scale(8);
@@ -63,8 +69,6 @@ constexpr int kCarouselNameWidth =
     kCarouselItemWidth - kCarouselNameInset * 2;
 constexpr int kCarouselNameY = metrics::Scale(78);
 constexpr int kCarouselArrowGap = metrics::Scale(8);
-constexpr int kCarouselCurveBase = metrics::Scale(49);
-constexpr int kCarouselCurveDrop = metrics::Scale(42);
 constexpr int kCarouselEdgeWidth = metrics::Scale(92);
 constexpr int kCarouselCenterX = metrics::kDisplayWidth / 2;
 constexpr int kCarouselDetentSize = 8;
