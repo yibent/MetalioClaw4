@@ -15,6 +15,7 @@
 #define UI_MAX_OBJECTS 64
 #define UI_EVENT_QUEUE_LENGTH 24
 #define UI_EVENT_ID_LENGTH 32
+#define LUA_UI_SAVED_CLICKABLE_MAX 32
 
 typedef enum {
     UI_OBJECT_NONE = 0,
@@ -65,7 +66,8 @@ struct ui_context {
 static const char kContextRegistryKey;
 static ui_context_t* s_screen_owner;
 static bool s_exclusive_input;
-static bool s_top_layer_was_hidden;
+static lv_obj_t* s_saved_clickable[LUA_UI_SAVED_CLICKABLE_MAX];
+static uint8_t s_saved_clickable_count;
 static lv_fs_drv_t s_native_fs_driver;
 static bool s_native_fs_registered;
 static lua_runtime_ui_lock_callback_t s_ui_lock;
@@ -296,25 +298,42 @@ static void reset_pointer_devices(void) {
     }
 }
 
+static void steal_clickable_recursive(lv_obj_t* obj) {
+    if (!obj)
+        return;
+    if (lv_obj_has_flag(obj, LV_OBJ_FLAG_CLICKABLE) &&
+        s_saved_clickable_count < LUA_UI_SAVED_CLICKABLE_MAX) {
+        s_saved_clickable[s_saved_clickable_count++] = obj;
+        lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    }
+    uint32_t n = lv_obj_get_child_count(obj);
+    for (uint32_t i = 0; i < n; ++i)
+        steal_clickable_recursive(lv_obj_get_child(obj, i));
+}
+
 static void begin_exclusive_input(void) {
-    lv_obj_t* top = lv_layer_top();
-    if (!s_exclusive_input && top) {
-        s_top_layer_was_hidden = lv_obj_has_flag(top, LV_OBJ_FLAG_HIDDEN);
-        /* Home keeps a full-screen conversation hit target on the top layer.
-         * Hide the whole overlay so those widgets cannot steal Lua touches,
-         * even if conversation mode re-enables them while the script runs. */
-        lv_obj_add_flag(top, LV_OBJ_FLAG_HIDDEN);
+    /* Do not hide lv_layer_top() itself: it has no parent, and
+     * lv_obj_remove_flag(HIDDEN) always dirties the parent. */
+    if (!s_exclusive_input) {
+        s_saved_clickable_count = 0;
+        lv_obj_t* top = lv_layer_top();
+        if (top)
+            steal_clickable_recursive(top);
+        s_exclusive_input = true;
     }
     reset_pointer_devices();
-    s_exclusive_input = true;
 }
 
 static void end_exclusive_input(void) {
     if (!s_exclusive_input)
         return;
-    lv_obj_t* top = lv_layer_top();
-    if (top && !s_top_layer_was_hidden)
-        lv_obj_remove_flag(top, LV_OBJ_FLAG_HIDDEN);
+    for (uint8_t i = 0; i < s_saved_clickable_count; ++i) {
+        lv_obj_t* obj = s_saved_clickable[i];
+        if (obj && lv_obj_is_valid(obj))
+            lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+        s_saved_clickable[i] = NULL;
+    }
+    s_saved_clickable_count = 0;
     reset_pointer_devices();
     s_exclusive_input = false;
 }

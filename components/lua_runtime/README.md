@@ -196,12 +196,12 @@ ui.poll_event(timeout_ms)
 ```
 
 All LVGL operations use the project's display lock. `ui.load()` takes exclusive
-pointer input for that screen: the Home top-layer overlay (status bar,
-conversation tap-to-talk) is hidden, leftover presses are reset, and
-decorative widgets without `event_id` do not swallow hits. Touch callbacks
-enqueue plain events; Lua retrieves them through `ui.poll_event()` so LVGL
-never calls into a Lua VM from the display thread. The overlay is restored
-when the Lua VM closes.
+pointer input for that screen: clickable widgets on `lv_layer_top()` (Home
+conversation tap-to-talk, keyboard) are made non-clickable, leftover presses
+are reset, and decorative widgets without `event_id` do not swallow hits.
+Touch callbacks enqueue plain events; Lua retrieves them through
+`ui.poll_event()` so LVGL never calls into a Lua VM from the display thread.
+Top-layer clickability is restored when the Lua VM closes.
 
 Touch events include `pressed`, `moved`, `released`, `lost`, `x`, `y`, `dx`,
 `dy`, and `time_ms`. The current hardware path is a single pointer, but move
