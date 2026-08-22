@@ -14,10 +14,25 @@ EspTcp::EspTcp() {
     event_group_ = xEventGroupCreate();
 }
 
-EspTcp::~EspTcp() {
-    Disconnect();
+void EspTcp::JoinReceiveTask() {
+    if (event_group_ == nullptr || !receive_task_started_) {
+        return;
+    }
+    const EventBits_t bits = xEventGroupWaitBits(
+        event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdTRUE, pdFALSE,
+        pdMS_TO_TICKS(10000));
+    if (!(bits & ESP_TCP_EVENT_RECEIVE_TASK_EXIT)) {
+        ESP_LOGE(TAG, "Failed to wait for receive task exit");
+        return;
+    }
+    receive_task_started_ = false;
+    receive_task_handle_ = nullptr;
+}
 
-    if (event_group_ != nullptr) {
+EspTcp::~EspTcp() {
+    DoDisconnect(true);
+
+    if (event_group_ != nullptr && !receive_task_started_) {
         vEventGroupDelete(event_group_);
         event_group_ = nullptr;
     }
@@ -25,9 +40,7 @@ EspTcp::~EspTcp() {
 
 bool EspTcp::Connect(const std::string& host, int port) {
     // 确保先断开已有连接
-    if (connected_) {
-        Disconnect();
-    }
+    Disconnect();
 
     struct sockaddr_in server_addr;
     bzero(&server_addr, sizeof(server_addr));
@@ -61,22 +74,29 @@ bool EspTcp::Connect(const std::string& host, int port) {
     connected_ = true;
 
     xEventGroupClearBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT);
-    xTaskCreate([](void* arg) {
-        EspTcp* tcp = (EspTcp*)arg;
-        tcp->ReceiveTask();
-        xEventGroupSetBits(tcp->event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT);
-        vTaskDelete(NULL);
-    }, "tcp_receive", 4096, this, 1, &receive_task_handle_);
+    receive_task_started_ = false;
+    if (xTaskCreate([](void* arg) {
+            auto* tcp = static_cast<EspTcp*>(arg);
+            EventGroupHandle_t events = tcp->event_group_;
+            tcp->ReceiveTask();
+            if (events != nullptr) {
+                xEventGroupSetBits(events, ESP_TCP_EVENT_RECEIVE_TASK_EXIT);
+            }
+            vTaskDelete(nullptr);
+        }, "tcp_receive", 4096, this, 1, &receive_task_handle_) != pdPASS) {
+        receive_task_handle_ = nullptr;
+        connected_ = false;
+        shutdown(tcp_fd_, SHUT_RDWR);
+        close(tcp_fd_);
+        tcp_fd_ = -1;
+        ESP_LOGE(TAG, "Failed to create receive task");
+        return false;
+    }
+    receive_task_started_ = true;
     return true;
 }
 
 void EspTcp::Disconnect() {
-    // 如果已经断开，直接返回
-    if (!connected_) {
-        return;
-    }
-
-    // 主动断开，需要等待接收任务退出
     DoDisconnect(true);
 }
 
@@ -84,22 +104,23 @@ void EspTcp::DoDisconnect(bool wait_for_task) {
     connected_ = false;
 
     if (tcp_fd_ != -1) {
-        close(tcp_fd_);
+        const int fd = tcp_fd_;
         tcp_fd_ = -1;
-
-        // 只有主动断开时才需要等待接收任务退出
-        // 被动断开时，当前就是接收任务，不需要等待
-        if (wait_for_task) {
-            auto bits = xEventGroupWaitBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
-            if (!(bits & ESP_TCP_EVENT_RECEIVE_TASK_EXIT)) {
-                ESP_LOGE(TAG, "Failed to wait for receive task exit");
-            }
-        }
+        shutdown(fd, SHUT_RDWR);
+        close(fd);
     }
 
-    // 断开连接时触发断开回调
+    // Always join the receive task on an active disconnect, even if the peer
+    // already closed the socket and ReceiveTask cleared connected_. Otherwise
+    // the destructor can delete event_group_ while the task still SetBits.
+    if (wait_for_task) {
+        JoinReceiveTask();
+    }
+
     if (disconnect_callback_) {
-        disconnect_callback_();
+        auto callback = disconnect_callback_;
+        disconnect_callback_ = nullptr;
+        callback();
     }
 }
 

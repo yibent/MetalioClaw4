@@ -29,8 +29,11 @@
 #include "screen_util.h"
 #include "system_info.h"
 
-LV_FONT_DECLARE(font_puhui_20_4);
-LV_FONT_DECLARE(font_puhui_30_4);
+#include <font_awesome.h>
+#include "app_shell.h"
+#include "fonts.h"
+#include "theme.h"
+#include "ui_components.h"
 
 namespace {
 
@@ -62,36 +65,22 @@ constexpr int  kMinRecordMs       = 300;  // 低于此时长视为误触
 // ---------------------------------------------------------------------------
 constexpr int32_t kPanelW       = DISPLAY_WIDTH;
 constexpr int32_t kPanelH       = DISPLAY_HEIGHT;
-constexpr int32_t kHeaderH      = 88;
-constexpr int32_t kBackBtnSize  = 72;
-constexpr int32_t kFooterH      = 140;
-constexpr int32_t kListH        = kPanelH - kHeaderH - kFooterH;
+constexpr int32_t kPad          = agent_ui::metrics::kPagePadding;
+constexpr int32_t kPortrait     = kPanelH > kPanelW ? 1 : 0;
 constexpr int32_t kRefreshIntervalMs = 3000;
-constexpr int32_t kListPadH     = 18;
-constexpr int32_t kBubblePadX   = 18;
-constexpr int32_t kBubblePadY   = 14;
-constexpr int32_t kBubbleRadius = 18;
+constexpr int32_t kListPadH     = kPortrait ? 12 : 18;
+constexpr int32_t kBubblePadX   = kPortrait ? 12 : 18;
+constexpr int32_t kBubblePadY   = kPortrait ? 10 : 14;
+constexpr int32_t kBubbleRadius = agent_ui::metrics::kRadiusControl;
 constexpr int32_t kSideMargin   = 8;
 constexpr int32_t kRowGap       = 12;
 constexpr int32_t kMaxMessages  = 50;
 
-constexpr uint32_t kColorBg          = 0x0E1116;
-constexpr uint32_t kColorHeaderBg    = 0x12151C;
-constexpr uint32_t kColorDivider     = 0x2A2F3A;
-constexpr uint32_t kColorHeaderText  = 0xFFFFFF;
-constexpr uint32_t kColorHeaderBtn   = 0x2A2F3A;
-constexpr uint32_t kColorHeaderBtnBorder = 0x3B4556;
-constexpr uint32_t kColorHeaderBtnText   = 0xE5E7EB;
-constexpr uint32_t kColorRightBubble = 0x1E3A2F;
-constexpr uint32_t kColorLeftBubble  = 0x202736;
-constexpr uint32_t kColorBubbleText  = 0xE8F5E9;
-constexpr uint32_t kColorLeftBubbleText = 0xE5E7EB;
-constexpr uint32_t kColorHintText    = 0x9AA3B2;
-constexpr uint32_t kColorErrorText   = 0xF87171;
-
-constexpr uint32_t kColorRecordBtnIdle   = 0x2563EB;
-constexpr uint32_t kColorRecordBtnActive = 0xDC2626;
-constexpr uint32_t kColorRecordBtnBusy   = 0x4B5563;
+const agent_ui::ThemeColors& Colors() {
+    return agent_ui::Theme::Get().colors();
+}
+const lv_font_t* FontTitle() { return agent_ui::fonts::MediumBold(); }
+const lv_font_t* FontBody() { return agent_ui::fonts::SmallBold(); }
 
 constexpr const char kEmptyHint[] = "开始与龙虾对话吧！";
 
@@ -217,7 +206,7 @@ bool s_activation_blocked = false;
 bool s_activation_dialog_shows_code = false;
 screen_lifecycle_cb_t s_lifecycle_cb = nullptr;
 
-const lv_font_t* chat_font() { return &font_puhui_30_4; }
+const lv_font_t* chat_font() { return kPortrait ? FontBody() : FontTitle(); }
 
 std::string get_upload_url() {
     return api::Url(api::kOpenClawUpload);
@@ -316,7 +305,7 @@ void open_activation_blocked_dialog(lv_obj_t* parent_screen) {
     screen_strip_obj_chrome(card);
     lv_obj_set_size(card, kCardW, kCardH);
     lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(card, lv_color_hex(0x1B2030), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(card, lv_color_hex(Colors().surface), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(card, 24, LV_PART_MAIN);
     lv_obj_set_style_pad_all(card, 28, LV_PART_MAIN);
@@ -325,8 +314,8 @@ void open_activation_blocked_dialog(lv_obj_t* parent_screen) {
 
     lv_obj_t* title = lv_label_create(card);
     lv_label_set_text(title, I18n::T("设备未激活"));
-    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &font_puhui_30_4, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, lv_color_hex(Colors().text), LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, FontTitle(), LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_remove_flag(title, LV_OBJ_FLAG_CLICKABLE);
 
@@ -334,8 +323,8 @@ void open_activation_blocked_dialog(lv_obj_t* parent_screen) {
     lv_label_set_long_mode(desc, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(desc, kCardW - 56);
     lv_label_set_text(desc, I18n::T("请先完成设备激活后再使用 OpenClaw。"));
-    lv_obj_set_style_text_color(desc, lv_color_hex(0x9AA3B2), LV_PART_MAIN);
-    lv_obj_set_style_text_font(desc, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_set_style_text_color(desc, lv_color_hex(Colors().muted), LV_PART_MAIN);
+    lv_obj_set_style_text_font(desc, FontBody(), LV_PART_MAIN);
     lv_obj_set_style_text_align(desc, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align(desc, LV_ALIGN_CENTER, 0, has_code ? -30 : -10);
     lv_obj_remove_flag(desc, LV_OBJ_FLAG_CLICKABLE);
@@ -348,7 +337,7 @@ void open_activation_blocked_dialog(lv_obj_t* parent_screen) {
         lv_label_set_text(code_lbl, code_buf);
         lv_obj_set_style_text_color(code_lbl, lv_color_hex(0xFBBF24),
                                     LV_PART_MAIN);
-        lv_obj_set_style_text_font(code_lbl, &font_puhui_30_4, LV_PART_MAIN);
+        lv_obj_set_style_text_font(code_lbl, FontTitle(), LV_PART_MAIN);
         lv_obj_align(code_lbl, LV_ALIGN_BOTTOM_MID, 0, -(kBackBtnH + 24));
         lv_obj_remove_flag(code_lbl, LV_OBJ_FLAG_CLICKABLE);
     }
@@ -356,7 +345,7 @@ void open_activation_blocked_dialog(lv_obj_t* parent_screen) {
     lv_obj_t* back = lv_button_create(card);
     lv_obj_remove_style_all(back);
     lv_obj_set_size(back, kBackBtnW, kBackBtnH);
-    lv_obj_set_style_bg_color(back, lv_color_hex(0x2A2F3A), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(back, lv_color_hex(Colors().raised), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(back, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(back, 16, LV_PART_MAIN);
     lv_obj_align(back, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -367,8 +356,8 @@ void open_activation_blocked_dialog(lv_obj_t* parent_screen) {
 
     lv_obj_t* back_lbl = lv_label_create(back);
     lv_label_set_text(back_lbl, I18n::T("返回"));
-    lv_obj_set_style_text_color(back_lbl, lv_color_hex(0xE5E7EB), LV_PART_MAIN);
-    lv_obj_set_style_text_font(back_lbl, &font_puhui_30_4, LV_PART_MAIN);
+    lv_obj_set_style_text_color(back_lbl, lv_color_hex(Colors().text), LV_PART_MAIN);
+    lv_obj_set_style_text_font(back_lbl, FontTitle(), LV_PART_MAIN);
     lv_obj_center(back_lbl);
     lv_obj_remove_flag(back_lbl, LV_OBJ_FLAG_CLICKABLE);
 }
@@ -578,9 +567,9 @@ void add_bubble(const char* text, bool is_user) {
 
     const lv_font_t* font = chat_font();
     const uint32_t bubble_bg =
-        is_user ? kColorRightBubble : kColorLeftBubble;
+        is_user ? Colors().accent : Colors().raised;
     const uint32_t text_color =
-        is_user ? kColorBubbleText : kColorLeftBubbleText;
+        is_user ? Colors().accent_ink : Colors().text;
 
     lv_obj_t* row = lv_obj_create(s_msg_list);
     lv_obj_set_width(row, LV_PCT(100));
@@ -640,25 +629,25 @@ void add_right_bubble(const char* text) {
     finalize_message_list_update();
 }
 
-// 在「非 LVGL 线程」里安全地往屏幕上加气泡 / 改文字。esp_lv_adapter_lock
+// 在「非 LVGL 线程」里安全地往屏幕上加气泡 / 改文字。screen_lvgl_lock
 // 是项目里统一的 LVGL 互斥锁包装。
 void post_bubble_from_worker(const std::string& text) {
     if (text.empty()) return;
-    if (esp_lv_adapter_lock(-1) != ESP_OK) return;
+    if (!screen_lvgl_lock(-1)) return;
     if (is_detail_screen_alive()) {
         add_right_bubble(text.c_str());
     }
-    esp_lv_adapter_unlock();
+    screen_lvgl_unlock();
 }
 
 void post_status_from_worker(const char* text, uint32_t color) {
-    if (esp_lv_adapter_lock(-1) != ESP_OK) return;
+    if (!screen_lvgl_lock(-1)) return;
     if (is_detail_screen_alive() && s_status_lbl != nullptr) {
         lv_label_set_text(s_status_lbl, text);
         lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(color),
                                     LV_PART_MAIN);
     }
-    esp_lv_adapter_unlock();
+    screen_lvgl_unlock();
 }
 
 // ---------------------------------------------------------------------------
@@ -1020,7 +1009,7 @@ void execute_fetch_history(uint32_t session, bool /*update_status*/) {
         messages_err = "parse failed";
     }
 
-    if (esp_lv_adapter_lock(-1) != ESP_OK) {
+    if (!screen_lvgl_lock(-1)) {
         return;
     }
     if (is_detail_screen_alive()) {
@@ -1040,7 +1029,7 @@ void execute_fetch_history(uint32_t session, bool /*update_status*/) {
                         lv_label_set_text(s_status_lbl, buf);
                     }
                     lv_obj_set_style_text_color(
-                        s_status_lbl, lv_color_hex(kColorHintText),
+                        s_status_lbl, lv_color_hex(Colors().muted),
                         LV_PART_MAIN);
                 }
                 ESP_LOGI(TAG, "messages loaded: %u",
@@ -1052,7 +1041,7 @@ void execute_fetch_history(uint32_t session, bool /*update_status*/) {
                                   messages_err.c_str());
                     lv_label_set_text(s_status_lbl, buf);
                     lv_obj_set_style_text_color(
-                        s_status_lbl, lv_color_hex(kColorErrorText),
+                        s_status_lbl, lv_color_hex(Colors().danger),
                         LV_PART_MAIN);
                 }
                 ESP_LOGW(TAG, "fetch messages failed: %s",
@@ -1060,7 +1049,7 @@ void execute_fetch_history(uint32_t session, bool /*update_status*/) {
             }
             if (s_record_btn != nullptr) {
                 lv_obj_set_style_bg_color(s_record_btn,
-                                          lv_color_hex(kColorRecordBtnIdle),
+                                          lv_color_hex(Colors().accent),
                                           LV_PART_MAIN);
                 lv_obj_add_flag(s_record_btn, LV_OBJ_FLAG_CLICKABLE);
             }
@@ -1068,7 +1057,7 @@ void execute_fetch_history(uint32_t session, bool /*update_status*/) {
             if (s_status_lbl != nullptr) {
                 lv_label_set_text(s_status_lbl, status_msg.c_str());
                 lv_obj_set_style_text_color(s_status_lbl,
-                                            lv_color_hex(kColorErrorText),
+                                            lv_color_hex(Colors().danger),
                                             LV_PART_MAIN);
             }
             save_refresh_snapshot(false, bridge_online, gateway_online, "",
@@ -1076,13 +1065,13 @@ void execute_fetch_history(uint32_t session, bool /*update_status*/) {
             if (s_record_btn != nullptr) {
                 lv_obj_remove_flag(s_record_btn, LV_OBJ_FLAG_CLICKABLE);
                 lv_obj_set_style_bg_color(s_record_btn,
-                                          lv_color_hex(kColorRecordBtnBusy),
+                                          lv_color_hex(Colors().raised),
                                           LV_PART_MAIN);
             }
             ESP_LOGW(TAG, "service unavailable: %s", status_msg.c_str());
         }
     }
-    esp_lv_adapter_unlock();
+    screen_lvgl_unlock();
 }
 
 void openclaw_worker_task(void* /*arg*/) {
@@ -1172,7 +1161,7 @@ void trigger_fetch_history(bool update_status) {
 
     if (update_status && s_status_lbl != nullptr) {
         lv_label_set_text(s_status_lbl, I18n::T("正在检查龙虾状态…"));
-        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(kColorHintText),
+        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(Colors().muted),
                                     LV_PART_MAIN);
     }
 
@@ -1181,7 +1170,7 @@ void trigger_fetch_history(bool update_status) {
         if (s_status_lbl != nullptr) {
             lv_label_set_text(s_status_lbl, I18n::T("无法启动加载任务"));
             lv_obj_set_style_text_color(s_status_lbl,
-                                        lv_color_hex(kColorErrorText),
+                                        lv_color_hex(Colors().danger),
                                         LV_PART_MAIN);
         }
     }
@@ -1283,7 +1272,7 @@ void execute_clear_all() {
 
     HttpDeleteResult http_res = http_remove_all_conversations();
 
-    if (esp_lv_adapter_lock(-1) != ESP_OK) {
+    if (!screen_lvgl_lock(-1)) {
         return;
     }
     if (is_list_screen_alive()) {
@@ -1303,7 +1292,7 @@ void execute_clear_all() {
                      safe_body.c_str());
         }
     }
-    esp_lv_adapter_unlock();
+    screen_lvgl_unlock();
 }
 
 HttpDeleteResult http_delete_conversation(const std::string& conversation_id) {
@@ -1377,14 +1366,14 @@ void execute_delete_one() {
         http_res = http_delete_conversation(conversation_id);
     }
 
-    if (esp_lv_adapter_lock(-1) != ESP_OK) {
+    if (!screen_lvgl_lock(-1)) {
         return;
     }
     const bool should_back =
         is_detail_screen_alive() &&
         (http_res.ok || conversation_id.empty());
     if (should_back) {
-        esp_lv_adapter_unlock();
+        screen_lvgl_unlock();
         lv_async_call(async_back_to_list_cb, nullptr);
         return;
     }
@@ -1392,13 +1381,13 @@ void execute_delete_one() {
         char buf[80];
         std::snprintf(buf, sizeof(buf), I18n::T("删除失败: %s"), http_res.err.c_str());
         lv_label_set_text(s_status_lbl, buf);
-        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(kColorErrorText),
+        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(Colors().danger),
                                     LV_PART_MAIN);
         const std::string safe_body = api::RedactClawUrlsForLog(http_res.body);
         ESP_LOGW(TAG, "delete conversation failed: status=%d err=%s body=%s",
                  http_res.status, http_res.err.c_str(), safe_body.c_str());
     }
-    esp_lv_adapter_unlock();
+    screen_lvgl_unlock();
 }
 
 void trigger_clear_all() {
@@ -1428,13 +1417,13 @@ void trigger_delete_one() {
 
     if (s_status_lbl != nullptr) {
         lv_label_set_text(s_status_lbl, I18n::T("正在删除…"));
-        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(kColorHintText),
+        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(Colors().muted),
                                     LV_PART_MAIN);
     }
 
     if (!submit_worker_job(WorkerJob::DeleteOne) && s_status_lbl != nullptr) {
         lv_label_set_text(s_status_lbl, I18n::T("无法启动删除任务"));
-        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(kColorErrorText),
+        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(Colors().danger),
                                     LV_PART_MAIN);
     }
 }
@@ -1489,7 +1478,7 @@ void execute_fetch_conv_list(uint32_t session) {
 
     s_service_available.store(service_ok);
 
-    if (esp_lv_adapter_lock(-1) != ESP_OK) {
+    if (!screen_lvgl_lock(-1)) {
         return;
     }
     if (is_list_screen_alive()) {
@@ -1509,7 +1498,7 @@ void execute_fetch_conv_list(uint32_t session) {
                 if (!status_msg.empty()) {
                     lv_label_set_text(s_list_hint, status_msg.c_str());
                     lv_obj_set_style_text_color(s_list_hint,
-                                                lv_color_hex(kColorErrorText),
+                                                lv_color_hex(Colors().danger),
                                                 LV_PART_MAIN);
                 } else {
                     char buf[96];
@@ -1517,7 +1506,7 @@ void execute_fetch_conv_list(uint32_t session) {
                                   list_res.err.c_str());
                     lv_label_set_text(s_list_hint, buf);
                     lv_obj_set_style_text_color(s_list_hint,
-                                                lv_color_hex(kColorErrorText),
+                                                lv_color_hex(Colors().danger),
                                                 LV_PART_MAIN);
                 }
                 lv_obj_remove_flag(s_list_hint, LV_OBJ_FLAG_HIDDEN);
@@ -1531,7 +1520,7 @@ void execute_fetch_conv_list(uint32_t session) {
             }
         }
     }
-    esp_lv_adapter_unlock();
+    screen_lvgl_unlock();
 }
 
 void on_conv_item_delete(lv_event_t* e) {
@@ -1615,9 +1604,9 @@ void add_conv_list_row(lv_obj_t* parent, const char* title_text,
 
         lv_obj_t* title = lv_label_create(center);
         lv_label_set_text(title, title_text);
-        lv_obj_set_style_text_color(title, lv_color_hex(kColorHeaderText),
+        lv_obj_set_style_text_color(title, lv_color_hex(Colors().text),
                                     LV_PART_MAIN);
-        lv_obj_set_style_text_font(title, &font_puhui_20_4, LV_PART_MAIN);
+        lv_obj_set_style_text_font(title, FontBody(), LV_PART_MAIN);
         lv_obj_remove_flag(title, LV_OBJ_FLAG_CLICKABLE);
 
         lv_obj_add_event_cb(row, on_create_conv_clicked, LV_EVENT_CLICKED,
@@ -1635,9 +1624,9 @@ void add_conv_list_row(lv_obj_t* parent, const char* title_text,
     lv_label_set_text(title, title_text);
     lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
     lv_obj_set_width(title, kPanelW - kTextLeft - 28);
-    lv_obj_set_style_text_color(title, lv_color_hex(kColorHeaderText),
+    lv_obj_set_style_text_color(title, lv_color_hex(Colors().text),
                                 LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, FontBody(), LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, kTextLeft, 8);
     lv_obj_remove_flag(title, LV_OBJ_FLAG_CLICKABLE);
 
@@ -1646,9 +1635,9 @@ void add_conv_list_row(lv_obj_t* parent, const char* title_text,
         lv_label_set_text(id_lbl, id_text);
         lv_label_set_long_mode(id_lbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(id_lbl, kPanelW - kTextLeft - 28);
-        lv_obj_set_style_text_color(id_lbl, lv_color_hex(kColorHintText),
+        lv_obj_set_style_text_color(id_lbl, lv_color_hex(Colors().muted),
                                     LV_PART_MAIN);
-        lv_obj_set_style_text_font(id_lbl, &font_puhui_20_4, LV_PART_MAIN);
+        lv_obj_set_style_text_font(id_lbl, FontBody(), LV_PART_MAIN);
         lv_obj_align(id_lbl, LV_ALIGN_BOTTOM_LEFT, kTextLeft, -8);
         lv_obj_remove_flag(id_lbl, LV_OBJ_FLAG_CLICKABLE);
     }
@@ -1667,9 +1656,9 @@ void add_conv_total_hint(lv_obj_t* parent, int total) {
     lv_obj_t* hint = lv_label_create(parent);
     lv_label_set_text(hint, buf);
     lv_obj_set_width(hint, LV_PCT(100));
-    lv_obj_set_style_text_color(hint, lv_color_hex(kColorHintText),
+    lv_obj_set_style_text_color(hint, lv_color_hex(Colors().muted),
                                 LV_PART_MAIN);
-    lv_obj_set_style_text_font(hint, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_set_style_text_font(hint, FontBody(), LV_PART_MAIN);
     lv_obj_set_style_pad_left(hint, 4, LV_PART_MAIN);
     lv_obj_set_style_pad_top(hint, 2, LV_PART_MAIN);
     lv_obj_set_style_pad_bottom(hint, 8, LV_PART_MAIN);
@@ -1723,9 +1712,14 @@ void update_button_ui_locked(State st) {
             lv_obj_set_style_bg_color(s_record_btn,
                                       lv_color_hex(
                                           s_service_available.load()
-                                              ? kColorRecordBtnIdle
-                                              : kColorRecordBtnBusy),
+                                              ? Colors().accent
+                                              : Colors().raised),
                                       LV_PART_MAIN);
+            lv_obj_set_style_text_color(
+                s_record_lbl,
+                lv_color_hex(s_service_available.load() ? Colors().accent_ink
+                                                        : Colors().text),
+                LV_PART_MAIN);
             lv_label_set_text(s_record_lbl, I18n::T("按住说话"));
             if (s_service_available.load()) {
                 lv_obj_add_flag(s_record_btn, LV_OBJ_FLAG_CLICKABLE);
@@ -1735,15 +1729,20 @@ void update_button_ui_locked(State st) {
             break;
         case State::Recording:
             lv_obj_set_style_bg_color(s_record_btn,
-                                      lv_color_hex(kColorRecordBtnActive),
+                                      lv_color_hex(Colors().danger),
                                       LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_record_lbl, lv_color_white(),
+                                        LV_PART_MAIN);
             lv_label_set_text(s_record_lbl, I18n::T("已录 0.0 秒"));
             lv_obj_add_flag(s_record_btn, LV_OBJ_FLAG_CLICKABLE);
             break;
         case State::Uploading:
             lv_obj_set_style_bg_color(s_record_btn,
-                                      lv_color_hex(kColorRecordBtnBusy),
+                                      lv_color_hex(Colors().raised),
                                       LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_record_lbl,
+                                        lv_color_hex(Colors().text),
+                                        LV_PART_MAIN);
             lv_label_set_text(s_record_lbl, I18n::T("上传中..."));
             lv_obj_remove_flag(s_record_btn, LV_OBJ_FLAG_CLICKABLE);
             break;
@@ -1862,14 +1861,14 @@ void record_and_upload_task(void* /*arg*/) {
     }
     if (buffer == nullptr) {
         ESP_LOGE(TAG, "no memory for record buffer");
-        post_status_from_worker(I18n::T("内存不足"), kColorHintText);
+        post_status_from_worker(I18n::T("内存不足"), Colors().muted);
         if (wake_disabled_by_us && app.IsVoiceUiActive()) {
             as.EnableWakeWordDetection(true);
         }
         s_state.store(State::Idle);
-        if (esp_lv_adapter_lock(-1) == ESP_OK) {
+        if (screen_lvgl_lock(-1)) {
             if (is_detail_screen_alive()) update_button_ui_locked(State::Idle);
-            esp_lv_adapter_unlock();
+            screen_lvgl_unlock();
         }
         s_record_task = nullptr;
         vTaskDelete(nullptr);
@@ -1919,12 +1918,12 @@ void record_and_upload_task(void* /*arg*/) {
     if (duration_ms < kMinRecordMs || written < 1024) {
         ESP_LOGI(TAG, "discard short recording: %d ms / %u bytes",
                  duration_ms, static_cast<unsigned>(written));
-        post_status_from_worker(I18n::T("录音太短，再试一次"), kColorHintText);
+        post_status_from_worker(I18n::T("录音太短，再试一次"), Colors().muted);
         heap_caps_free(buffer);
         s_state.store(State::Idle);
-        if (esp_lv_adapter_lock(-1) == ESP_OK) {
+        if (screen_lvgl_lock(-1)) {
             if (is_detail_screen_alive()) update_button_ui_locked(State::Idle);
-            esp_lv_adapter_unlock();
+            screen_lvgl_unlock();
         }
         s_record_task = nullptr;
         vTaskDelete(nullptr);
@@ -1933,13 +1932,13 @@ void record_and_upload_task(void* /*arg*/) {
 
     // 切到 Uploading 状态，刷新按钮
     s_state.store(State::Uploading);
-    if (esp_lv_adapter_lock(-1) == ESP_OK) {
+    if (screen_lvgl_lock(-1)) {
         if (is_detail_screen_alive()) update_button_ui_locked(State::Uploading);
-        esp_lv_adapter_unlock();
+        screen_lvgl_unlock();
     }
     char hint[64];
     std::snprintf(hint, sizeof(hint), I18n::T("上传中… (%.1fs)"), duration_ms / 1000.0f);
-    post_status_from_worker(hint, kColorHintText);
+    post_status_from_worker(hint, Colors().muted);
 
     uint8_t wav_header[44];
     fill_wav_header(wav_header, static_cast<uint32_t>(written));
@@ -1954,12 +1953,12 @@ void record_and_upload_task(void* /*arg*/) {
     if (res.ok) {
         if (!res.conversation_id.empty()) {
             s_conversation_id = res.conversation_id;
-            if (esp_lv_adapter_lock(-1) == ESP_OK) {
+            if (screen_lvgl_lock(-1)) {
                 if (is_detail_screen_alive() && s_detail_id_lbl != nullptr) {
                     lv_label_set_text(s_detail_id_lbl,
                                         s_conversation_id.c_str());
                 }
-                esp_lv_adapter_unlock();
+                screen_lvgl_unlock();
             }
         }
         ESP_LOGI(TAG, "upload ok, asr=%s conv=%s", res.text.c_str(),
@@ -1975,30 +1974,30 @@ void record_and_upload_task(void* /*arg*/) {
                 s_service_available.load(), true, true, s_conversation_id,
                 messages_json);
             if (!unchanged) {
-                if (esp_lv_adapter_lock(-1) == ESP_OK) {
+                if (screen_lvgl_lock(-1)) {
                     if (is_detail_screen_alive()) {
                         apply_history_locked(messages);
                     }
-                    esp_lv_adapter_unlock();
+                    screen_lvgl_unlock();
                 }
                 save_refresh_snapshot(s_service_available.load(), true, true,
                                       s_conversation_id, messages_json);
             }
-            post_status_from_worker(I18n::T("按住说话"), kColorHintText);
+            post_status_from_worker(I18n::T("按住说话"), Colors().muted);
         } else {
             ESP_LOGW(TAG, "refresh messages failed: %s", fetch_err.c_str());
-            post_status_from_worker(I18n::T("刷新消息失败"), kColorErrorText);
+            post_status_from_worker(I18n::T("刷新消息失败"), Colors().danger);
         }
     } else {
         ESP_LOGW(TAG, "upload failed: %s", res.err.c_str());
         std::string msg = I18n::T("上传失败: ") + res.err;
-        post_status_from_worker(msg.c_str(), kColorErrorText);
+        post_status_from_worker(msg.c_str(), Colors().danger);
     }
 
     s_state.store(State::Idle);
-    if (esp_lv_adapter_lock(-1) == ESP_OK) {
+    if (screen_lvgl_lock(-1)) {
         if (is_detail_screen_alive()) update_button_ui_locked(State::Idle);
-        esp_lv_adapter_unlock();
+        screen_lvgl_unlock();
     }
     s_record_task = nullptr;
     vTaskDelete(nullptr);
@@ -2017,7 +2016,7 @@ void on_record_pressed(lv_event_t* /*e*/) {
         if (s_status_lbl != nullptr) {
             lv_label_set_text(s_status_lbl, I18n::T("龙虾服务不可用"));
             lv_obj_set_style_text_color(s_status_lbl,
-                                        lv_color_hex(kColorErrorText),
+                                        lv_color_hex(Colors().danger),
                                         LV_PART_MAIN);
         }
         return;
@@ -2035,7 +2034,7 @@ void on_record_pressed(lv_event_t* /*e*/) {
         ds == kDeviceStateSpeaking || ds == kDeviceStateUpgrading) {
         if (s_status_lbl != nullptr) {
             lv_label_set_text(s_status_lbl, I18n::T("请先结束当前对话"));
-            lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(kColorErrorText),
+            lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(Colors().danger),
                                         LV_PART_MAIN);
         }
         return;
@@ -2046,7 +2045,7 @@ void on_record_pressed(lv_event_t* /*e*/) {
     update_button_ui_locked(State::Recording);
     if (s_status_lbl != nullptr) {
         lv_label_set_text(s_status_lbl, I18n::T("正在录音…松开结束"));
-        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(kColorHintText),
+        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(Colors().muted),
                                     LV_PART_MAIN);
     }
 
@@ -2161,7 +2160,7 @@ void open_clear_confirm_dialog(ClearDialogMode mode) {
     screen_strip_obj_chrome(card);
     lv_obj_set_size(card, kCardW, kCardH);
     lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(card, lv_color_hex(0x1B2030), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(card, lv_color_hex(Colors().surface), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(card, 24, LV_PART_MAIN);
     lv_obj_set_style_pad_all(card, 24, LV_PART_MAIN);
@@ -2173,7 +2172,7 @@ void open_clear_confirm_dialog(ClearDialogMode mode) {
                       mode == ClearDialogMode::RemoveAll ? I18n::T("清空会话")
                                                          : I18n::T("删除会话"));
     lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &font_puhui_30_4, LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, FontTitle(), LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_remove_flag(title, LV_OBJ_FLAG_CLICKABLE);
 
@@ -2182,15 +2181,15 @@ void open_clear_confirm_dialog(ClearDialogMode mode) {
                       mode == ClearDialogMode::RemoveAll
                           ? I18n::T("此操作会清空设备全部会话，是否确定？")
                           : I18n::T("是否删除此会话？"));
-    lv_obj_set_style_text_color(desc, lv_color_hex(0x9AA3B2), LV_PART_MAIN);
-    lv_obj_set_style_text_font(desc, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_set_style_text_color(desc, lv_color_hex(Colors().muted), LV_PART_MAIN);
+    lv_obj_set_style_text_font(desc, FontBody(), LV_PART_MAIN);
     lv_obj_align(desc, LV_ALIGN_CENTER, 0, -10);
     lv_obj_remove_flag(desc, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t* cancel = lv_button_create(card);
     lv_obj_remove_style_all(cancel);
     lv_obj_set_size(cancel, kBtnW, kBtnH);
-    lv_obj_set_style_bg_color(cancel, lv_color_hex(0x2A2F3A), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(cancel, lv_color_hex(Colors().raised), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(cancel, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(cancel, 16, LV_PART_MAIN);
     lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
@@ -2200,7 +2199,7 @@ void open_clear_confirm_dialog(ClearDialogMode mode) {
         lv_obj_t* lbl = lv_label_create(cancel);
         lv_label_set_text(lbl, I18n::T("取消"));
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xE5E7EB), LV_PART_MAIN);
-        lv_obj_set_style_text_font(lbl, &font_puhui_30_4, LV_PART_MAIN);
+        lv_obj_set_style_text_font(lbl, FontTitle(), LV_PART_MAIN);
         lv_obj_center(lbl);
         lv_obj_remove_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
     }
@@ -2208,7 +2207,7 @@ void open_clear_confirm_dialog(ClearDialogMode mode) {
     lv_obj_t* ok = lv_button_create(card);
     lv_obj_remove_style_all(ok);
     lv_obj_set_size(ok, kBtnW, kBtnH);
-    lv_obj_set_style_bg_color(ok, lv_color_hex(0xDC2626), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(ok, lv_color_hex(Colors().danger), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(ok, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(ok, 16, LV_PART_MAIN);
     lv_obj_align(ok, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
@@ -2218,25 +2217,10 @@ void open_clear_confirm_dialog(ClearDialogMode mode) {
         lv_obj_t* lbl = lv_label_create(ok);
         lv_label_set_text(lbl, I18n::T("确定"));
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-        lv_obj_set_style_text_font(lbl, &font_puhui_30_4, LV_PART_MAIN);
+        lv_obj_set_style_text_font(lbl, FontTitle(), LV_PART_MAIN);
         lv_obj_center(lbl);
         lv_obj_remove_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
     }
-}
-
-// ---------------------------------------------------------------------------
-// Header 按钮样式
-// ---------------------------------------------------------------------------
-void style_header_btn(lv_obj_t* btn) {
-    lv_obj_set_style_radius(btn, 28, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(kColorHeaderBtn), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_color(btn, lv_color_hex(kColorHeaderBtnBorder),
-                                  LV_PART_MAIN);
-    lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x3B4556),
-                              LV_PART_MAIN | LV_STATE_PRESSED);
 }
 
 void on_swipe_back_home() {
@@ -2346,78 +2330,34 @@ void on_detail_screen_unloaded(lv_event_t* /*e*/) {
 // ---------------------------------------------------------------------------
 // UI 组装
 // ---------------------------------------------------------------------------
-void build_list_header(lv_obj_t* parent) {
-    lv_obj_t* header = lv_obj_create(parent);
-    screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelW, kHeaderH);
-    lv_obj_set_pos(header, 0, 0);
-    lv_obj_set_style_bg_color(header, lv_color_hex(kColorHeaderBg),
-                              LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+void on_list_back_clicked(lv_event_t*) { on_swipe_back_home(); }
+void on_detail_back_clicked(lv_event_t*) { on_swipe_back_to_list(); }
 
-    lv_obj_t* divider = lv_obj_create(header);
-    screen_strip_obj_chrome(divider);
-    lv_obj_set_size(divider, kPanelW, 1);
-    lv_obj_align(divider, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(divider, lv_color_hex(kColorDivider),
-                              LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, LV_PART_MAIN);
-    screen_make_input_passive(divider);
-
-    lv_obj_t* back = lv_button_create(header);
-    lv_obj_remove_style_all(back);
-    lv_obj_set_size(back, kBackBtnSize, kBackBtnSize);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 16, 0);
-    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(back, lv_color_hex(0xFFFFFF),
-                              LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(back, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(back, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(back, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(back,
-                        [](lv_event_t* /*e*/) { on_swipe_back_home(); },
-                        LV_EVENT_CLICKED, nullptr);
-    screen_swipe_back_ignore(back, true);
-
-    lv_obj_t* back_icon = lv_image_create(back);
-    lv_image_set_src(back_icon, "A:ic_app_back.spng");
-    lv_obj_remove_flag(back_icon, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_center(back_icon);
-
-    lv_obj_t* title = lv_label_create(header);
-    lv_label_set_text(title, "OpenClaw");
-    lv_obj_set_style_text_color(title, lv_color_hex(kColorHeaderText),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &font_puhui_30_4, LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 16 + kBackBtnSize + 12, 0);
-
-    constexpr int32_t kHdrBtnW = 88;
-    constexpr int32_t kHdrBtnH = 56;
-    constexpr int32_t kHdrRightPad = 12;
-
-    lv_obj_t* clear = lv_button_create(header);
-    s_list_clear_btn = clear;
-    lv_obj_set_size(clear, kHdrBtnW, kHdrBtnH);
-    lv_obj_align(clear, LV_ALIGN_RIGHT_MID, -kHdrRightPad, 0);
-    style_header_btn(clear);
-    lv_obj_add_event_cb(clear, on_list_clear_clicked, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* clear_lbl = lv_label_create(clear);
-    lv_label_set_text(clear_lbl, I18n::T("清空"));
-    lv_obj_set_style_text_color(clear_lbl, lv_color_hex(kColorHeaderBtnText),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(clear_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(clear_lbl);
+void wire_openclaw_screen(lv_obj_t* scr, screen_swipe_back_cb_t on_back,
+                          lv_event_cb_t on_unloaded) {
+    screen_mark_native_layout(scr);
+    screen_attach_swipe_back(scr, on_back);
+    if (s_lifecycle_cb != nullptr) {
+        screen_attach_lifecycle(scr, s_lifecycle_cb);
+    }
+    lv_obj_add_event_cb(scr, on_unloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
 }
 
 void build_list_body(lv_obj_t* parent) {
+    lv_obj_t* title = lv_label_create(parent);
+    lv_label_set_text(title, "OpenClaw");
+    lv_obj_set_style_text_color(title, lv_color_hex(Colors().text), LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, FontTitle(), LV_PART_MAIN);
+    lv_obj_set_pos(title, kPad, 12);
+    screen_make_input_passive(title);
+
     s_list_container = lv_obj_create(parent);
-    lv_obj_set_size(s_list_container, kPanelW, kPanelH - kHeaderH);
-    lv_obj_set_pos(s_list_container, 0, kHeaderH);
+    lv_obj_set_size(s_list_container, kPanelW, agent_ui::metrics::kBottomActionContentHeight - 52);
+    lv_obj_set_pos(s_list_container, 0, 48);
     screen_strip_obj_chrome(s_list_container);
     lv_obj_set_style_bg_opa(s_list_container, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_pad_hor(s_list_container, 16, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(s_list_container, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(s_list_container, kPad, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(s_list_container, 8, LV_PART_MAIN);
     lv_obj_set_style_pad_bottom(s_list_container, 16, LV_PART_MAIN);
     lv_obj_set_style_pad_row(s_list_container, 10, LV_PART_MAIN);
     lv_obj_set_scrollbar_mode(s_list_container, LV_SCROLLBAR_MODE_OFF);
@@ -2432,109 +2372,68 @@ void build_list_body(lv_obj_t* parent) {
     lv_label_set_long_mode(s_list_hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(s_list_hint, LV_TEXT_ALIGN_CENTER,
                                 LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_list_hint, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_list_hint, lv_color_hex(kColorHintText),
+    lv_obj_set_style_text_font(s_list_hint, FontBody(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_list_hint, lv_color_hex(Colors().muted),
                                 LV_PART_MAIN);
-    lv_obj_align(s_list_hint, LV_ALIGN_TOP_MID, 0,
-                 kHeaderH + (kPanelH - kHeaderH) / 2 - 20);
+    lv_obj_align(s_list_hint, LV_ALIGN_CENTER, 0, 0);
     screen_make_input_passive(s_list_hint);
 }
 
-void build_detail_header(lv_obj_t* parent) {
-    lv_obj_t* header = lv_obj_create(parent);
-    screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelW, kHeaderH);
-    lv_obj_set_pos(header, 0, 0);
-    lv_obj_set_style_bg_color(header, lv_color_hex(kColorHeaderBg),
-                              LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+void build_list_actions(lv_obj_t* bar) {
+    auto clear = agent_ui::ui_components::AddBottomActionButton(
+        bar, FONT_AWESOME_TRASH, I18n::T("清空"), on_list_clear_clicked, nullptr,
+        true);
+    s_list_clear_btn = clear.root;
+    screen_swipe_back_ignore(s_list_clear_btn, true);
+    agent_ui::ui_components::AddBottomActionSpacer(bar);
+}
 
-    lv_obj_t* divider = lv_obj_create(header);
-    screen_strip_obj_chrome(divider);
-    lv_obj_set_size(divider, kPanelW, 1);
-    lv_obj_align(divider, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(divider, lv_color_hex(kColorDivider),
-                              LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, LV_PART_MAIN);
-    screen_make_input_passive(divider);
-
-    lv_obj_t* back = lv_button_create(header);
-    lv_obj_remove_style_all(back);
-    lv_obj_set_size(back, kBackBtnSize, kBackBtnSize);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 16, 0);
-    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(back, lv_color_hex(0xFFFFFF),
-                              LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(back, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(back, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(back, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(back,
-                        [](lv_event_t* /*e*/) { on_swipe_back_to_list(); },
-                        LV_EVENT_CLICKED, nullptr);
-    screen_swipe_back_ignore(back, true);
-
-    lv_obj_t* back_icon = lv_image_create(back);
-    lv_image_set_src(back_icon, "A:ic_app_back.spng");
-    lv_obj_remove_flag(back_icon, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_center(back_icon);
-
-    const int32_t title_left = 16 + kBackBtnSize + 12;
-    const int32_t title_w = kPanelW - title_left - 120;
-
-    s_detail_title_lbl = lv_label_create(header);
+void build_detail_body(lv_obj_t* parent) {
+    s_detail_title_lbl = lv_label_create(parent);
     lv_label_set_text(s_detail_title_lbl,
                       s_conversation_title.empty() ? I18n::T("未命名会话")
                                                    : s_conversation_title.c_str());
     lv_label_set_long_mode(s_detail_title_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_detail_title_lbl, title_w);
+    lv_obj_set_width(s_detail_title_lbl, kPanelW - kPad * 2);
     lv_obj_set_style_text_color(s_detail_title_lbl,
-                                lv_color_hex(kColorHeaderText), LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_detail_title_lbl, &font_puhui_20_4,
-                               LV_PART_MAIN);
-    lv_obj_align(s_detail_title_lbl, LV_ALIGN_LEFT_MID, title_left, -12);
+                                lv_color_hex(Colors().text), LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_detail_title_lbl, FontTitle(), LV_PART_MAIN);
+    lv_obj_set_pos(s_detail_title_lbl, kPad, 10);
 
-    s_detail_id_lbl = lv_label_create(header);
+    s_detail_id_lbl = lv_label_create(parent);
     if (s_conversation_id.empty()) {
         lv_label_set_text(s_detail_id_lbl, I18n::T("新会话"));
     } else {
         lv_label_set_text(s_detail_id_lbl, s_conversation_id.c_str());
     }
     lv_label_set_long_mode(s_detail_id_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_detail_id_lbl, title_w);
-    lv_obj_set_style_text_color(s_detail_id_lbl, lv_color_hex(kColorHintText),
+    lv_obj_set_width(s_detail_id_lbl, kPanelW - kPad * 2);
+    lv_obj_set_style_text_color(s_detail_id_lbl, lv_color_hex(Colors().muted),
                                 LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_detail_id_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_align(s_detail_id_lbl, LV_ALIGN_LEFT_MID, title_left, 14);
+    lv_obj_set_style_text_font(s_detail_id_lbl, FontBody(), LV_PART_MAIN);
+    lv_obj_set_pos(s_detail_id_lbl, kPad, 42);
 
-    constexpr int32_t kHdrBtnW = 88;
-    constexpr int32_t kHdrBtnH = 56;
-    constexpr int32_t kHdrRightPad = 12;
-
-    lv_obj_t* clear = lv_button_create(header);
-    lv_obj_set_size(clear, kHdrBtnW, kHdrBtnH);
-    lv_obj_align(clear, LV_ALIGN_RIGHT_MID, -kHdrRightPad, 0);
-    style_header_btn(clear);
-    lv_obj_add_event_cb(clear, on_detail_clear_clicked, LV_EVENT_CLICKED,
-                        nullptr);
-    lv_obj_t* clear_lbl = lv_label_create(clear);
-    lv_label_set_text(clear_lbl, I18n::T("删除"));
-    lv_obj_set_style_text_color(clear_lbl, lv_color_hex(kColorHeaderBtnText),
+    s_status_lbl = lv_label_create(parent);
+    lv_label_set_text(s_status_lbl, I18n::T("按住下面的按钮说话"));
+    lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(Colors().muted),
                                 LV_PART_MAIN);
-    lv_obj_set_style_text_font(clear_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(clear_lbl);
-}
+    lv_obj_set_style_text_font(s_status_lbl, FontBody(), LV_PART_MAIN);
+    lv_obj_align(s_status_lbl, LV_ALIGN_BOTTOM_MID, 0, -8);
+    screen_make_input_passive(s_status_lbl);
 
-void build_message_list(lv_obj_t* parent) {
+    const int list_top = 72;
+    const int list_bottom = 36;
     s_msg_list = lv_obj_create(parent);
-    lv_obj_set_size(s_msg_list, kPanelW, kListH);
-    lv_obj_set_pos(s_msg_list, 0, kHeaderH);
+    lv_obj_set_size(s_msg_list, kPanelW,
+                    agent_ui::metrics::kBottomActionContentHeight - list_top -
+                        list_bottom);
+    lv_obj_set_pos(s_msg_list, 0, list_top);
     screen_strip_obj_chrome(s_msg_list);
     lv_obj_set_style_bg_opa(s_msg_list, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_pad_left(s_msg_list, kListPadH, LV_PART_MAIN);
     lv_obj_set_style_pad_right(s_msg_list, kListPadH, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(s_msg_list, 14, LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(s_msg_list, 16, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(s_msg_list, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(s_msg_list, 12, LV_PART_MAIN);
     lv_obj_set_scrollbar_mode(s_msg_list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_dir(s_msg_list, LV_DIR_VER);
     lv_obj_set_flex_flow(s_msg_list, LV_FLEX_FLOW_COLUMN);
@@ -2547,91 +2446,46 @@ void build_message_list(lv_obj_t* parent) {
     lv_label_set_long_mode(s_empty_hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(s_empty_hint, LV_TEXT_ALIGN_CENTER,
                                 LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_empty_hint, &font_puhui_30_4, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_empty_hint, lv_color_hex(kColorHintText),
+    lv_obj_set_style_text_font(s_empty_hint, FontTitle(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_empty_hint, lv_color_hex(Colors().muted),
                                 LV_PART_MAIN);
-    lv_obj_align(s_empty_hint, LV_ALIGN_TOP_MID, 0,
-                 kHeaderH + (kListH / 2) - 50);
+    lv_obj_align(s_empty_hint, LV_ALIGN_CENTER, 0, -10);
     screen_make_input_passive(s_empty_hint);
     update_empty_hint();
 }
 
-void build_footer(lv_obj_t* parent) {
-    lv_obj_t* footer = lv_obj_create(parent);
-    screen_strip_obj_chrome(footer);
-    lv_obj_set_size(footer, kPanelW, kFooterH);
-    lv_obj_set_pos(footer, 0, kPanelH - kFooterH);
-    lv_obj_set_style_bg_color(footer, lv_color_hex(kColorBg), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_remove_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
-
-    s_status_lbl = lv_label_create(footer);
-    lv_label_set_text(s_status_lbl, I18n::T("按住下面的按钮说话"));
-    lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(kColorHintText),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_status_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_align(s_status_lbl, LV_ALIGN_TOP_MID, 0, 10);
-    screen_make_input_passive(s_status_lbl);
-
-    constexpr int32_t kBtnW = 400;
-    constexpr int32_t kBtnH = 72;
-    s_record_btn = lv_button_create(footer);
-    lv_obj_set_size(s_record_btn, kBtnW, kBtnH);
-    lv_obj_align(s_record_btn, LV_ALIGN_BOTTOM_MID, 0, -16);
-    lv_obj_set_style_radius(s_record_btn, kBtnH / 2, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_record_btn, lv_color_hex(kColorRecordBtnIdle),
-                              LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_record_btn, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(s_record_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_border_width(s_record_btn, 0, LV_PART_MAIN);
-    // 按下时背景再深一层，给一个明确的「正在按」反馈。
-    lv_obj_set_style_bg_color(s_record_btn,
-                              lv_color_hex(kColorRecordBtnActive),
+void build_detail_actions(lv_obj_t* bar) {
+    auto primary = agent_ui::ui_components::AddBottomPrimaryButton(
+        bar, FONT_AWESOME_MICROPHONE, I18n::T("按住说话"), nullptr);
+    s_record_btn = primary.root;
+    s_record_lbl = primary.label;
+    lv_obj_set_style_bg_color(s_record_btn, lv_color_hex(Colors().danger),
                               LV_PART_MAIN | LV_STATE_PRESSED);
-
-    s_record_lbl = lv_label_create(s_record_btn);
-    lv_label_set_text(s_record_lbl, I18n::T("按住说话"));
-    lv_obj_set_style_text_color(s_record_lbl, lv_color_hex(0xFFFFFF),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_record_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(s_record_lbl);
-
     lv_obj_add_event_cb(s_record_btn, on_record_pressed, LV_EVENT_PRESSED,
                         nullptr);
     lv_obj_add_event_cb(s_record_btn, on_record_released, LV_EVENT_RELEASED,
                         nullptr);
-    // 用户在按钮上做小幅水平拖动时不应被识别成「右滑返回」。slider/arc
-    // 的判定逻辑在 screen_util 里，对这种长按场景我们走一样的豁免：录音
-    // 按钮整体不参与 swipe-back 计算。代价是从按钮处开始的右滑无法返
-    // 回 home，用户可以从按钮外的空白区滑动。
     screen_swipe_back_ignore(s_record_btn, true);
+
+    auto del = agent_ui::ui_components::AddBottomActionButton(
+        bar, FONT_AWESOME_TRASH, I18n::T("删除"), on_detail_clear_clicked,
+        nullptr, true);
+    screen_swipe_back_ignore(del.root, true);
 }
 
 lv_obj_t* create_list_screen() {
-    lv_obj_t* scr = lv_obj_create(nullptr);
-    s_list_screen = scr;
-    screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelW, kPanelH);
-    lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    auto shell = agent_ui::CreateAppShell("OpenClaw", nullptr, true,
+                                         on_list_back_clicked);
+    s_list_screen = shell.root;
+    build_list_body(shell.content);
+    build_list_actions(shell.actions);
 
-    build_list_header(scr);
-    build_list_body(scr);
-
-    screen_mark_native_layout(scr);
-
+    wire_openclaw_screen(s_list_screen, on_swipe_back_home,
+                         on_list_screen_unloaded);
     if (s_activation_blocked) {
-        open_activation_blocked_dialog(scr);
+        open_activation_blocked_dialog(s_list_screen);
     }
-
-    screen_attach_swipe_back(scr, on_swipe_back_home);
-    if (s_lifecycle_cb != nullptr) {
-        screen_attach_lifecycle(scr, s_lifecycle_cb);
-    }
-    lv_obj_add_event_cb(scr, on_list_screen_unloaded, LV_EVENT_SCREEN_UNLOADED,
-                        nullptr);
-    lv_obj_add_event_cb(scr, [](lv_event_t* e) {
+    lv_obj_add_event_cb(s_list_screen, [](lv_event_t* e) {
         if (lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED) {
             sync_activation_block_state();
             if (s_activation_blocked) {
@@ -2641,7 +2495,7 @@ lv_obj_t* create_list_screen() {
             trigger_fetch_conv_list();
         }
     }, LV_EVENT_SCREEN_LOADED, nullptr);
-    return scr;
+    return s_list_screen;
 }
 
 lv_obj_t* create_detail_screen(const std::string& conversation_id,
@@ -2650,19 +2504,11 @@ lv_obj_t* create_detail_screen(const std::string& conversation_id,
     s_conversation_title = title;
     invalidate_refresh_snapshot();
 
-    lv_obj_t* scr = lv_obj_create(nullptr);
-    s_detail_screen = scr;
-    screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelW, kPanelH);
-    lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-
-    build_detail_header(scr);
-    build_message_list(scr);
-    build_footer(scr);
-
-    screen_mark_native_layout(scr);
+    auto shell = agent_ui::CreateAppShell("OpenClaw", nullptr, true,
+                                         on_detail_back_clicked);
+    s_detail_screen = shell.root;
+    build_detail_body(shell.content);
+    build_detail_actions(shell.actions);
 
     if (s_status_lbl != nullptr) {
         lv_label_set_text(s_status_lbl, I18n::T("正在检查龙虾状态…"));
@@ -2673,13 +2519,9 @@ lv_obj_t* create_detail_screen(const std::string& conversation_id,
     s_stop_requested.store(false);
     s_record_start_us.store(0);
 
-    screen_attach_swipe_back(scr, on_swipe_back_to_list);
-    if (s_lifecycle_cb != nullptr) {
-        screen_attach_lifecycle(scr, s_lifecycle_cb);
-    }
-    lv_obj_add_event_cb(scr, on_detail_screen_unloaded, LV_EVENT_SCREEN_UNLOADED,
-                        nullptr);
-    lv_obj_add_event_cb(scr, [](lv_event_t* e) {
+    wire_openclaw_screen(s_detail_screen, on_swipe_back_to_list,
+                         on_detail_screen_unloaded);
+    lv_obj_add_event_cb(s_detail_screen, [](lv_event_t* e) {
         if (lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED) {
             sync_activation_block_state();
             if (s_activation_blocked) {
@@ -2690,7 +2532,7 @@ lv_obj_t* create_detail_screen(const std::string& conversation_id,
             start_auto_refresh_timer();
         }
     }, LV_EVENT_SCREEN_LOADED, nullptr);
-    return scr;
+    return s_detail_screen;
 }
 
 }  // namespace

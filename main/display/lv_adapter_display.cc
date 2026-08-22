@@ -177,6 +177,8 @@ void LVAdapterDisplay::SetPreviewImage(const void* image) {}
 
 void LVAdapterDisplay::SetTheme(Theme* const theme) { ESP_LOGI(TAG, "SetTheme: %p", theme); }
 
-bool LVAdapterDisplay::Lock(const int timeout_ms) { return true; }
+bool LVAdapterDisplay::Lock(const int timeout_ms) {
+    return esp_lv_adapter_lock(timeout_ms) == ESP_OK;
+}
 
-void LVAdapterDisplay::Unlock() {}
+void LVAdapterDisplay::Unlock() { esp_lv_adapter_unlock(); }

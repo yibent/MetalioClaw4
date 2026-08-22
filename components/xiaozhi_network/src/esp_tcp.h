@@ -24,11 +24,12 @@ private:
     int tcp_fd_ = -1;
     EventGroupHandle_t event_group_ = nullptr;
     TaskHandle_t receive_task_handle_ = nullptr;
+    bool receive_task_started_ = false;
     int last_error_ = 0;
 
     void ReceiveTask();
-    // 内部断开处理函数
-    // wait_for_task: 是否等待接收任务退出（主动断开为true，被动断开为false）
+    void JoinReceiveTask();
+    // wait_for_task: true = join the receive task (active close / destructor)
     void DoDisconnect(bool wait_for_task);
 };
 
