@@ -6,6 +6,7 @@
 #include "board_hardware.h"
 #include "config.h"
 #include "led/single_led.h"
+#include "adc_battery_monitor.h"
 
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_mipi_dsi.h"
@@ -118,6 +119,7 @@ class jc4880p443 : public WifiBoard {
 private:
     i2c_master_bus_handle_t codec_i2c_bus_;
     Button boot_button_;
+    AdcBatteryMonitor battery_monitor_;
     MipiLcdDisplay* display__;
 
     void InitializeCodecI2c() {
@@ -304,7 +306,13 @@ private:
     // }
 
 public:
-    jc4880p443() : boot_button_(BOOT_BUTTON_GPIO) {
+    jc4880p443()
+        : boot_button_(BOOT_BUTTON_GPIO),
+          battery_monitor_(BATTERY_ADC_UNIT, BATTERY_ADC_CHANNEL, BATTERY_UPPER_RESISTOR,
+                           BATTERY_LOWER_RESISTOR, GPIO_NUM_NC) {
+        ESP_LOGI(TAG, "Battery ADC GPIO%d (ADC2_CH%d), divider %.0f/%.0f ohm",
+                 BATTERY_ADC_GPIO, BATTERY_ADC_CHANNEL, BATTERY_UPPER_RESISTOR,
+                 BATTERY_LOWER_RESISTOR);
 
         InitializeCodecI2c();
         // InitializeIot();
@@ -336,6 +344,14 @@ public:
     virtual Backlight* GetBacklight() override {
         static PwmBacklight backlight(PIN_NUM_BK_LIGHT, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
         return &backlight;
+    }
+
+    virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
+        // Charge IC status is not connected to P4; never report charging.
+        charging = false;
+        discharging = true;
+        level = battery_monitor_.GetBatteryLevel();
+        return true;
     }
 
 };

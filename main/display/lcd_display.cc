@@ -261,36 +261,36 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
     port_cfg.task_stack = 12 * 1024;
     lvgl_port_init(&port_cfg);
 
-    ESP_LOGI(TAG, "Adding LCD display");
+    ESP_LOGI(TAG, "Adding LCD display (swap_xy=%d mirror_x=%d mirror_y=%d)",
+             swap_xy, mirror_x, mirror_y);
+    // Software rotation: ST7701 MIPI cannot change scan direction after DPI
+    // start (Command2 bank switch causes stripes/flicker). Do not use
+    // direct_mode / avoid_tearing — those bind LVGL to the DPI framebuffers
+    // and cannot be rotated in the flush path.
     const lvgl_port_display_cfg_t disp_cfg = {
         .io_handle = panel_io,
         .panel_handle = panel,
         .control_handle = nullptr,
-        .buffer_size = static_cast<uint32_t>(width_ * height_ * 50),
+        .buffer_size = static_cast<uint32_t>(width_ * 50),
         .double_buffer = true,
         .hres = static_cast<uint32_t>(width_),
         .vres = static_cast<uint32_t>(height_),
+        .rotation = {
+            .swap_xy = false,
+            .mirror_x = false,
+            .mirror_y = false,
+        },
         .color_format = color_format,
         .flags = {
-            .direct_mode = true,
+            .buff_dma = true,
+            .buff_spiram = false,
+            .sw_rotate = true,
         },
-        // .monochrome = false,
-        /* Rotation values must be same as used in esp_lcd for initial settings of the screen */
-        // .rotation = {
-        //     .swap_xy = swap_xy,
-        //     .mirror_x = mirror_x,
-        //     .mirror_y = mirror_y,
-        // },
-        // .flags = {
-        //     .buff_dma = true,
-        //     .buff_spiram =false,
-        //     .sw_rotate = true,
-        // },
     };
     ESP_LOGI(TAG, "LVGL lvgl_port_display_dsi_cfg_t");
     const lvgl_port_display_dsi_cfg_t dpi_cfg = {
         .flags = {
-            .avoid_tearing = true,
+            .avoid_tearing = false,
         }
     };
     display_ = lvgl_port_add_disp_dsi(&disp_cfg, &dpi_cfg);
@@ -301,6 +301,15 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
 
     if (offset_x != 0 || offset_y != 0) {
         lv_display_set_offset(display_, offset_x, offset_y);
+    }
+
+    if (mirror_x && mirror_y) {
+        lvgl_port_lock(0);
+        lv_display_set_rotation(display_, LV_DISPLAY_ROTATION_180);
+        lvgl_port_unlock();
+        ESP_LOGI(TAG, "LVGL software rotation 180");
+    } else if (swap_xy || mirror_x || mirror_y) {
+        ESP_LOGW(TAG, "MIPI SW rotate only implements 180 (mirror_x && mirror_y)");
     }
     ESP_LOGI(TAG, "LVGL 初始化完成");
     SetupStartupUI();
