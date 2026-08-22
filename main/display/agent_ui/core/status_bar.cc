@@ -52,6 +52,62 @@ void SetA8Color(lv_obj_t* image, uint32_t color) {
     lv_obj_set_style_image_recolor_opa(image, LV_OPA_COVER, LV_PART_MAIN);
 }
 
+constexpr int kDesignStatusBarHeight = 62;
+
+int StatusBarScale(int value) {
+    return (value * metrics::kStatusBarHeight + kDesignStatusBarHeight / 2) /
+           kDesignStatusBarHeight;
+}
+
+const lv_font_t* StatusBarTextFont() {
+    return StatusBarScale(28) <= 22 ? fonts::SmallBold() : fonts::MediumBold();
+}
+
+const lv_font_t* StatusBarIconFont() {
+    return StatusBarScale(28) <= 22 ? fonts::Icon() : fonts::IconLarge();
+}
+
+void ApplyNetworkIconSize(lv_obj_t* icon) {
+    if (icon == nullptr) return;
+    const int size = StatusBarScale(28);
+    lv_obj_set_size(icon, size, size);
+    lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CONTAIN);
+}
+
+void ApplyBatteryBoltSize(lv_obj_t* image) {
+    if (image == nullptr) return;
+    lv_obj_set_size(image, StatusBarScale(22), StatusBarScale(28));
+    lv_image_set_inner_align(image, LV_IMAGE_ALIGN_CONTAIN);
+}
+
+int StatusBarTextWidth(const char* text) {
+    lv_point_t size{};
+    lv_text_get_size(&size, text != nullptr ? text : "", StatusBarTextFont(), 0,
+                     0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    return size.x;
+}
+
+int BatteryPercentSlotWidth() {
+    return std::max(StatusBarTextWidth("100%"), StatusBarTextWidth("--%")) + 2;
+}
+
+void LayoutRightCluster(lv_obj_t* cluster, lv_obj_t* group, lv_obj_t* label,
+                        lv_obj_t* icon) {
+    if (cluster == nullptr || group == nullptr || label == nullptr ||
+        icon == nullptr) {
+        return;
+    }
+    const int label_width = BatteryPercentSlotWidth();
+    const int icon_width = StatusBarScale(42);
+    const int gap = StatusBarScale(9);
+    const int pad = StatusBarScale(8);
+    lv_obj_set_width(label, label_width);
+    lv_obj_set_width(icon, icon_width);
+    lv_obj_set_width(group, label_width + gap + icon_width);
+    lv_obj_set_width(cluster, label_width + gap + icon_width + pad * 2);
+    lv_obj_align(cluster, LV_ALIGN_TOP_RIGHT, 0, 0);
+}
+
 }  // namespace
 
 StatusBar& StatusBar::Get() {
@@ -76,39 +132,45 @@ void StatusBar::Create() {
     lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(root_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(root_, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
     left_cluster_ = lv_obj_create(root_);
     lv_obj_remove_style_all(left_cluster_);
-    lv_obj_set_size(left_cluster_, metrics::Scale(174), metrics::Scale(34));
-    lv_obj_align(left_cluster_, LV_ALIGN_LEFT_MID, metrics::Scale(34), 0);
+    lv_obj_set_pos(left_cluster_, 0, 0);
+    lv_obj_set_size(left_cluster_, LV_SIZE_CONTENT, metrics::kStatusBarHeight);
+    lv_obj_set_style_max_width(left_cluster_, metrics::kDisplayWidth, LV_PART_MAIN);
     lv_obj_set_flex_flow(left_cluster_, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(left_cluster_, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(left_cluster_, 12, LV_PART_MAIN);
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_hor(left_cluster_, StatusBarScale(8), LV_PART_MAIN);
+    lv_obj_set_style_pad_column(left_cluster_, StatusBarScale(12), LV_PART_MAIN);
     lv_obj_remove_flag(left_cluster_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(left_cluster_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(left_cluster_, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
     bluetooth_icon_ = lv_label_create(left_cluster_);
     lv_label_set_text(bluetooth_icon_, FONT_AWESOME_BLUETOOTH);
-    lv_obj_set_style_text_font(bluetooth_icon_, fonts::IconLarge(), LV_PART_MAIN);
+    lv_label_set_long_mode(bluetooth_icon_, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_font(bluetooth_icon_, StatusBarIconFont(), LV_PART_MAIN);
     lv_obj_set_style_text_color(bluetooth_icon_, lv_color_hex(colors.text), LV_PART_MAIN);
-    lv_obj_set_width(bluetooth_icon_, 28);
+    lv_obj_set_size(bluetooth_icon_, StatusBarScale(28), StatusBarScale(28));
     lv_obj_set_style_text_align(bluetooth_icon_, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_translate_y(bluetooth_icon_, -4, LV_PART_MAIN);
     lv_obj_add_flag(bluetooth_icon_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(bluetooth_icon_, LV_OBJ_FLAG_CLICKABLE);
 
     network_icon_ = lv_image_create(left_cluster_);
     lv_image_set_src(network_icon_, &status_signal_assets::kWifi0);
-    lv_obj_set_size(network_icon_, metrics::Scale(28), metrics::Scale(28));
-    lv_obj_set_style_translate_y(network_icon_, -4, LV_PART_MAIN);
+    ApplyNetworkIconSize(network_icon_);
     SetA8Color(network_icon_, colors.text);
     lv_obj_remove_flag(network_icon_, LV_OBJ_FLAG_CLICKABLE);
 
     time_label_ = lv_label_create(left_cluster_);
-    lv_obj_set_style_text_font(time_label_, fonts::MediumBold(), LV_PART_MAIN);
+    lv_label_set_long_mode(time_label_, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_font(time_label_, StatusBarTextFont(), LV_PART_MAIN);
     lv_obj_set_style_text_color(time_label_, lv_color_hex(colors.text), LV_PART_MAIN);
-    lv_obj_set_width(time_label_, metrics::Scale(80));
+    lv_obj_set_width(time_label_, LV_SIZE_CONTENT);
+    lv_obj_set_height(time_label_, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(time_label_, metrics::kStatusBarHeight, LV_PART_MAIN);
     lv_obj_set_style_text_align(time_label_, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
 
     agent_cluster_ = lv_obj_create(root_);
@@ -137,43 +199,47 @@ void StatusBar::Create() {
 
     right_cluster_ = lv_obj_create(root_);
     lv_obj_remove_style_all(right_cluster_);
-    lv_obj_set_size(right_cluster_, metrics::Scale(119), metrics::kStatusBarHeight);
-    lv_obj_align(right_cluster_, LV_ALIGN_RIGHT_MID, -metrics::Scale(16), 0);
+    lv_obj_set_height(right_cluster_, metrics::kStatusBarHeight);
     lv_obj_set_flex_flow(right_cluster_, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(right_cluster_, LV_FLEX_ALIGN_START,
+    lv_obj_set_flex_align(right_cluster_, LV_FLEX_ALIGN_END,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_hor(right_cluster_, StatusBarScale(8), LV_PART_MAIN);
     lv_obj_remove_flag(right_cluster_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(right_cluster_, LV_OBJ_FLAG_CLICKABLE);
 
     battery_group_ = lv_obj_create(right_cluster_);
     lv_obj_remove_style_all(battery_group_);
-    lv_obj_set_size(battery_group_, 119, 34);
+    lv_obj_set_height(battery_group_, metrics::kStatusBarHeight);
     lv_obj_set_flex_flow(battery_group_, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(battery_group_, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(battery_group_, 9, LV_PART_MAIN);
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(battery_group_, StatusBarScale(9), LV_PART_MAIN);
     lv_obj_remove_flag(battery_group_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(battery_group_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(battery_group_, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
     battery_label_ = lv_label_create(battery_group_);
     StyleLabel(battery_label_);
-    lv_obj_set_style_text_font(battery_label_, fonts::MediumBold(), LV_PART_MAIN);
-    lv_obj_set_width(battery_label_, 68);
+    lv_label_set_long_mode(battery_label_, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_font(battery_label_, StatusBarTextFont(), LV_PART_MAIN);
+    lv_obj_set_height(battery_label_, LV_SIZE_CONTENT);
     lv_obj_set_style_text_align(battery_label_, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_obj_add_flag(battery_label_, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
     battery_icon_ = lv_obj_create(battery_group_);
     lv_obj_remove_style_all(battery_icon_);
-    lv_obj_set_size(battery_icon_, 42, 28);
-    lv_obj_set_style_translate_y(battery_icon_, -3, LV_PART_MAIN);
+    lv_obj_set_size(battery_icon_, StatusBarScale(42), StatusBarScale(28));
     lv_obj_remove_flag(battery_icon_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(battery_icon_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(battery_icon_, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
     battery_outline_ = lv_obj_create(battery_icon_);
     lv_obj_remove_style_all(battery_outline_);
-    lv_obj_set_size(battery_outline_, 36, 24);
-    lv_obj_set_pos(battery_outline_, 0, 2);
-    lv_obj_set_style_radius(battery_outline_, 4, LV_PART_MAIN);
-    lv_obj_set_style_border_width(battery_outline_, 2, LV_PART_MAIN);
+    lv_obj_set_size(battery_outline_, StatusBarScale(36), StatusBarScale(24));
+    lv_obj_set_pos(battery_outline_, 0, StatusBarScale(2));
+    lv_obj_set_style_radius(battery_outline_, StatusBarScale(4), LV_PART_MAIN);
+    lv_obj_set_style_border_width(battery_outline_,
+                                  std::max(1, StatusBarScale(2)), LV_PART_MAIN);
     lv_obj_set_style_border_color(battery_outline_, lv_color_hex(colors.text),
                                   LV_PART_MAIN);
     lv_obj_set_style_border_opa(battery_outline_, LV_OPA_COVER, LV_PART_MAIN);
@@ -182,8 +248,10 @@ void StatusBar::Create() {
     for (size_t index = 0; index < battery_cells_.size(); ++index) {
         battery_cells_[index] = lv_obj_create(battery_icon_);
         lv_obj_remove_style_all(battery_cells_[index]);
-        lv_obj_set_size(battery_cells_[index], 7, 14);
-        lv_obj_set_pos(battery_cells_[index], 5 + static_cast<int>(index) * 10, 7);
+        lv_obj_set_size(battery_cells_[index], StatusBarScale(7), StatusBarScale(14));
+        lv_obj_set_pos(battery_cells_[index],
+                       StatusBarScale(5) + static_cast<int>(index) * StatusBarScale(10),
+                       StatusBarScale(7));
         lv_obj_set_style_radius(battery_cells_[index], 1, LV_PART_MAIN);
         lv_obj_set_style_bg_color(
             battery_cells_[index], lv_color_hex(colors.text), LV_PART_MAIN);
@@ -194,25 +262,30 @@ void StatusBar::Create() {
 
     battery_tip_ = lv_obj_create(battery_icon_);
     lv_obj_remove_style_all(battery_tip_);
-    lv_obj_set_size(battery_tip_, 4, 10);
-    lv_obj_set_pos(battery_tip_, 37, 9);
+    lv_obj_set_size(battery_tip_, StatusBarScale(4), StatusBarScale(10));
+    lv_obj_set_pos(battery_tip_, StatusBarScale(37), StatusBarScale(9));
     lv_obj_set_style_radius(battery_tip_, 1, LV_PART_MAIN);
     lv_obj_set_style_bg_color(battery_tip_, lv_color_hex(colors.text), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(battery_tip_, LV_OPA_COVER, LV_PART_MAIN);
 
     battery_bolt_outline_ = lv_image_create(battery_icon_);
     lv_image_set_src(battery_bolt_outline_, &status_signal_assets::kBatteryBoltOutline);
-    lv_obj_set_pos(battery_bolt_outline_, 7, 0);
+    ApplyBatteryBoltSize(battery_bolt_outline_);
+    lv_obj_set_pos(battery_bolt_outline_, StatusBarScale(7), 0);
     SetA8Color(battery_bolt_outline_, colors.background);
     lv_obj_add_flag(battery_bolt_outline_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(battery_bolt_outline_, LV_OBJ_FLAG_CLICKABLE);
 
     battery_bolt_fill_ = lv_image_create(battery_icon_);
     lv_image_set_src(battery_bolt_fill_, &status_signal_assets::kBatteryBoltFill);
-    lv_obj_set_pos(battery_bolt_fill_, 7, 0);
+    ApplyBatteryBoltSize(battery_bolt_fill_);
+    lv_obj_set_pos(battery_bolt_fill_, StatusBarScale(7), 0);
     SetA8Color(battery_bolt_fill_, colors.accent);
     lv_obj_add_flag(battery_bolt_fill_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(battery_bolt_fill_, LV_OBJ_FLAG_CLICKABLE);
+
+    LayoutRightCluster(right_cluster_, battery_group_, battery_label_,
+                       battery_icon_);
 
     timer_ = lv_timer_create(TimerCallback, 1000, this);
     lv_obj_add_event_cb(root_, DeletedCallback, LV_EVENT_DELETE, this);
@@ -229,7 +302,6 @@ void StatusBar::Refresh(bool force) {
     const bool bluetooth_enabled = bluetooth::Adapter::Get().IsEnabled();
     const bool bluetooth_connected = bluetooth_enabled &&
                                      bluetooth::Adapter::Get().IsConnected();
-    lv_obj_set_width(left_cluster_, bluetooth_enabled ? 214 : 174);
     if (force || last_bluetooth_enabled_ != bluetooth_enabled ||
         last_bluetooth_connected_ != bluetooth_connected) {
         last_bluetooth_enabled_ = bluetooth_enabled;
@@ -248,6 +320,7 @@ void StatusBar::Refresh(bool force) {
     if (force || last_network_asset_ != network_asset) {
         last_network_asset_ = network_asset;
         lv_image_set_src(network_icon_, network_asset);
+        ApplyNetworkIconSize(network_icon_);
     }
     lv_obj_set_style_bg_color(root_, lv_color_hex(colors.background), LV_PART_MAIN);
     SetA8Color(network_icon_, colors.text);
@@ -292,6 +365,8 @@ void StatusBar::Refresh(bool force) {
     if (force || last_battery_text_ != battery_text) {
         last_battery_text_ = battery_text;
         lv_label_set_text(battery_label_, battery_text);
+        LayoutRightCluster(right_cluster_, battery_group_, battery_label_,
+                           battery_icon_);
     }
     const uint32_t battery_color = has_battery && !charging && level < 20
                                        ? colors.danger
