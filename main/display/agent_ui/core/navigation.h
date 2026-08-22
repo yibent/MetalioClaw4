@@ -18,6 +18,7 @@ public:
     void Start();
     void Open(ScreenId id);
     void Back();
+    void ReturnHome();
     void RebuildCurrent();
 
     ScreenId current() const { return current_; }

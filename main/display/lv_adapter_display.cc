@@ -13,8 +13,6 @@
 #include "mmap_generate_resources.h"
 
 #include "screen/boot_screen/boot_screen.h"
-#include "screen/chat_screen/chat_screen.h"
-#include "screen/home_screen/home_screen.h"
 
 #include "agent_ui/agent_ui_runtime.h"
 #include "agent_ui/apps/boot/boot_view.h"
@@ -39,8 +37,7 @@ LVAdapterDisplay::LVAdapterDisplay(const esp_lcd_panel_handle_t panel,
 
     // 性能调优要点（720x720 RGB565 屏）：
     //   - enable_ppa_accel: 开启 PPA。半透明/圆角会触发 adapter「先 msync 再
-    //     软件 fallback」；主屏翻页期间由 home_screen 降级为纯不透明直角绘制
-    //     （见 SetPagerSkeletonMode），避免刷 invalid addr。
+    //     软件 fallback」。
     //   - tear_avoid_mode = TRIPLE_FULL：直接把 LCD 驱动里 num_fbs=3 的 3 张
     //     panel 帧缓冲（PSRAM 上 3×720×720×2 ≈ 3MB）当成 LVGL 的 draw buffer
     //     用，渲染→DMA 三级流水，无撕裂。
@@ -144,10 +141,6 @@ void LVAdapterDisplay::SetChatMessage(const char* const role, const char* const 
         return;
     }
     agent_ui::Runtime::Get().SetConversationMessage(role, content);
-    if (ChatScreen::IsActive()) {
-        ChatScreen::AddMessage(content,
-                               is_user ? ChatMsgDir::Right : ChatMsgDir::Left);
-    }
     esp_lv_adapter_unlock();
 }
 
@@ -165,8 +158,10 @@ void LVAdapterDisplay::SetStatus(const char* const status) {
         case kDeviceStateSpeaking:
             ui.SetAgentState(agent_ui::AgentState::Answering);
             break;
-        default:
+        case kDeviceStateIdle:
             ui.SetAgentState(agent_ui::AgentState::Idle);
+            break;
+        default:
             break;
     }
     esp_lv_adapter_unlock();

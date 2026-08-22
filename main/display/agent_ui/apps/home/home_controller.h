@@ -10,7 +10,7 @@ namespace agent_ui::home {
 class Controller {
 public:
     using StateSink = std::function<void(const ViewState&)>;
-    using CommandSink = std::function<void(const Command&)>;
+    using CommandSink = std::function<bool(const Command&)>;
 
     void Activate(StateSink state_sink, CommandSink command_sink);
     void Deactivate();

@@ -21,7 +21,6 @@ uint32_t DemandBit(PerformanceDemand demand) {
 
 constexpr uint32_t kBoostDemandMask =
     static_cast<uint32_t>(PerformanceDemand::Ai) |
-    static_cast<uint32_t>(PerformanceDemand::Camera) |
     static_cast<uint32_t>(PerformanceDemand::Transfer) |
     static_cast<uint32_t>(PerformanceDemand::Custom0);
 constexpr uint32_t kBalancedDemandMask =

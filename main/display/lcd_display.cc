@@ -19,7 +19,6 @@
 #include "board.h"
 #include "mmap_generate_resources.h"
 #include "screen/boot_screen/boot_screen.h"
-#include "screen/home_screen/home_screen.h"
 #include "agent_ui/agent_ui_runtime.h"
 #include "agent_ui/apps/boot/boot_view.h"
 #include "application.h"
@@ -256,7 +255,8 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
 
     ESP_LOGI(TAG, "Initialize LVGL port");
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
-    // NetworkScreen has a deeper LVGL object tree than the home screen.  The
+    // Some Agent UI screens have a deeper LVGL object tree than the home
+    // screen.  The
     // port default (7168 bytes) overflows while recursively drawing it.
     port_cfg.task_stack = 12 * 1024;
     lvgl_port_init(&port_cfg);
@@ -316,7 +316,7 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
 }
 
 void MipiLcdDisplay::SetupStartupUI() {
-    // The boot animation and HomeScreen use assets from the resources partition.
+    // The boot animation and home UI use assets from the resources partition.
     // Mount it through esp_lv_fs directly so this display can keep using the
     // regular esp_lvgl_port/DSI path instead of requiring esp_lv_adapter.
     static mmap_assets_handle_t assets = nullptr;
@@ -1085,6 +1085,9 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
         if (is_user || is_assistant) {
             agent_ui::Runtime::Get().SetConversationMessage(role, content);
         }
+    }
+    if (chat_message_label_ == nullptr) {
+        return;
     }
     DisplayLockGuard lock(this);
     if (chat_message_label_ == nullptr) {

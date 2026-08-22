@@ -9,7 +9,7 @@
 #include "assets/lang_config.h"
 #include "config.h"
 #include "esp_lv_adapter.h"
-#include "home_screen/home_screen.h"
+#include "navigation.h"
 #include "screen_util.h"
 
 LV_FONT_DECLARE(font_puhui_20_4);
@@ -302,15 +302,9 @@ void OtaScreen::Dismiss() {
         return;
     }
 
-    lv_obj_t* old_screen = s_ui.screen;
     s_ui = {};
     s_start_time_us = 0;
-
-    lv_obj_t* home = HomeScreen::Create();
-    lv_screen_load(home);
-    if (old_screen != nullptr) {
-        lv_obj_delete(old_screen);
-    }
+    agent_ui::Navigation::Get().ReturnHome();
 
     esp_lv_adapter_unlock();
     ESP_LOGI(TAG, "OTA screen dismissed");

@@ -4,10 +4,11 @@
 
 namespace agent_ui::home {
 
-void Adapter::Execute(const Command& command) {
+bool Adapter::Execute(const Command& command) {
     if (command.type == CommandType::ToggleListening) {
-        Application::GetInstance().ToggleChatState();
+        return Application::GetInstance().ToggleChatState();
     }
+    return true;
 }
 
 }  // namespace agent_ui::home

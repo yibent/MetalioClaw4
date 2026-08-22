@@ -29,27 +29,11 @@ set(SOURCES "audio/audio_codec.cc"
             "hermes_voice_session.cc"
             "i18n/i18n.cc"
             "display/screen/screen_util.cc"
-            "display/screen/wifi_required_dialog.cc"
             "display/screen/idle_power_policy.cc"
             "display/screen/pwr_key_handler.cc"
             "display/screen/boot_screen/boot_screen.cc"
             "display/screen/ota_screen/ota_screen.cc"
-            "display/screen/home_screen/home_screen.cc"
-            "display/screen/info_screen/info_screen.cc"
             "display/screen/standby_screen/standby_screen.cc"
-            "display/screen/game_2048_screen/game_2048_screen.cc"
-            "display/screen/calculator_screen/calculator_screen.cc"
-            "display/screen/calendar_screen/calendar_screen.cc"
-            "display/screen/weather_screen/weather_screen.cc"
-            "display/screen/weather_screen/weather_icon_map.cc"
-            "display/screen/weather_screen/weather_city_list.cc"
-            "display/screen/camera_screen/camera_screen.cc"
-            "display/screen/backlight_screen/backlight_screen.cc"
-            "display/screen/settings_screen/settings_screen.cc"
-            "display/screen/bluetooth_screen/bluetooth_screen.cc"
-            "display/screen/chat_screen/chat_screen.cc"
-            "display/screen/network_screen/network_screen.cc"
-            "display/screen/sd_card_screen/sd_card_screen.cc"
             "display/screen/openclaw_screen/openclaw_screen.cc"
             "display/screen/ai_image_gen_screen/ai_image_gen_screen.cc"
             "display/screen/translate_screen/translate_screen.cc"
@@ -75,7 +59,7 @@ set(SOURCES "audio/audio_codec.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "i18n" "display" "display/font" "display/lvgl_display" "display/lvgl_display/jpg" "display/screen" "display/screen/boot_screen" "display/screen/ota_screen" "display/screen/home_screen" "display/screen/game_2048_screen" "display/screen/calculator_screen" "display/screen/calendar_screen" "display/screen/weather_screen" "display/screen/camera_screen" "display/screen/backlight_screen" "display/screen/settings_screen" "display/screen/bluetooth_screen" "display/screen/chat_screen" "display/screen/network_screen" "display/screen/sd_card_screen" "display/screen/openclaw_screen" "display/screen/ai_image_gen_screen" "display/screen/translate_screen" "display/screen/info_screen" "display/screen/standby_screen" "audio" "protocols")
+set(INCLUDE_DIRS "." "i18n" "display" "display/font" "display/lvgl_display" "display/lvgl_display/jpg" "display/screen" "display/screen/boot_screen" "display/screen/ota_screen" "display/screen/openclaw_screen" "display/screen/ai_image_gen_screen" "display/screen/translate_screen" "display/screen/standby_screen" "audio" "protocols")
 
 include("${CMAKE_CURRENT_LIST_DIR}/display/agent_ui/sources.cmake")
 list(APPEND SOURCES ${AGENT_UI_SOURCES})

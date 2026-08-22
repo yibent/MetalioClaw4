@@ -95,16 +95,8 @@ constexpr const char* kText2ImageTaskFmt =
 // Sonicloud 实时同声传译：换 Token，返回 data.wsUrl
 constexpr const char* kSinicloudToken = "/xiaozhi/api/sinicloud/token";
 
-// Weather
-constexpr const char* kWeatherDistrictPath =
-    "/api/v1/weather/district?dataType=all&districtId=";
-
 inline std::string Url(const char* path) {
     return std::string(kHost) + path;
-}
-
-inline std::string WeatherDistrictUrl(const std::string& district_id) {
-    return Url(kWeatherDistrictPath) + district_id;
 }
 
 inline std::string OpenClawMessagesUrl(const std::string& conversation_id) {

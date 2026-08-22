@@ -332,6 +332,7 @@ void StatusBar::Refresh(bool force) {
 }
 
 void StatusBar::SetAgentState(AgentState state) {
+    if (agent_state_ == state && agent_label_ != nullptr) return;
     agent_state_ = state;
     if (agent_dot_ == nullptr || agent_label_ == nullptr) return;
     const auto& colors = Theme::Get().colors();

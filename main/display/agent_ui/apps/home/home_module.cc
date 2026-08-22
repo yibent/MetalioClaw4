@@ -10,8 +10,14 @@ void Module::Initialize(const char* initial_message, NavigationSink navigation_s
     navigation_sink_ = std::move(navigation_sink);
     controller_.HandleEvent(Event::GreetingMessage(initial_message));
     controller_.Activate(
-        [this](const ViewState& state) { view_.Render(state); },
-        [this](const Command& command) { HandleCommand(command); });
+        [this](const ViewState& state) {
+            view_.Render(state);
+            if (state.agent_state != last_status_agent_state_) {
+                last_status_agent_state_ = state.agent_state;
+                StatusBar::Get().SetAgentState(state.agent_state);
+            }
+        },
+        [this](const Command& command) { return HandleCommand(command); });
 }
 
 void Module::HandleEvent(const Event& event) {
@@ -29,13 +35,12 @@ void Module::Unmount() {
     view_.Unmount();
 }
 
-void Module::HandleCommand(const Command& command) {
+bool Module::HandleCommand(const Command& command) {
     if (command.type == CommandType::OpenApp) {
         if (navigation_sink_) navigation_sink_(command.target);
-        return;
+        return true;
     }
-    StatusBar::Get().SetAgentState(controller_.state().agent_state);
-    adapter_.Execute(command);
+    return adapter_.Execute(command);
 }
 
 }  // namespace agent_ui::home

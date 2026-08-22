@@ -211,11 +211,11 @@ struct AppDefinition {
 };
 
 const std::array<AppDefinition, 6> kBuiltInApps = {{
-    {ScreenId::ClassicApps, "01", "应用", "", false},
-    {ScreenId::Codex, "02", "Codex", "", true},
-    {ScreenId::Phone, "03", "电话", "", false},
-    {ScreenId::Files, "04", "文件", "", false},
-    {ScreenId::Camera, "05", "相机", "", false},
+    {ScreenId::OpenClaw, "01", "OpenClaw", "", true},
+    {ScreenId::AiImageGen, "02", "AI生图", "", true},
+    {ScreenId::Translate, "03", "翻译", "", true},
+    {ScreenId::Codex, "04", "Codex", "", true},
+    {ScreenId::Files, "05", "文件", "", false},
     {ScreenId::Settings, "06", "设置", "", false},
 }};
 

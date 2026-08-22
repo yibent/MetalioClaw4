@@ -6,7 +6,7 @@ namespace agent_ui::home {
 
 class Adapter {
 public:
-    void Execute(const Command& command);
+    bool Execute(const Command& command);
 };
 
 }  // namespace agent_ui::home

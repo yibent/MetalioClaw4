@@ -30,11 +30,17 @@ void Controller::HandleIntent(const Intent& intent) {
         return;
     }
 
-    if (state_.agent_state == AgentState::Idle) {
+    const bool started_connecting = state_.agent_state == AgentState::Idle;
+    if (started_connecting) {
         state_.agent_state = AgentState::Connecting;
         PublishState();
     }
-    command_sink_({.type = CommandType::ToggleListening, .target = ScreenId::Home});
+    if (!command_sink_({.type = CommandType::ToggleListening, .target = ScreenId::Home})) {
+        if (started_connecting) {
+            state_.agent_state = AgentState::Idle;
+            PublishState();
+        }
+    }
 }
 
 void Controller::HandleEvent(const Event& event) {

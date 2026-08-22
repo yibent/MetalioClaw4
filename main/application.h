@@ -52,7 +52,8 @@ public:
     void Alert(const char* status, const char* message, const char* emotion = "", const std::string_view& sound = "");
     void DismissAlert();
     void AbortSpeaking(AbortReason reason);
-    void ToggleChatState();
+    // 无语音 UI 会话时丢弃请求并返回 false，供主页把「连接中」滚回待机。
+    bool ToggleChatState();
     void StartListening();
     void StopListening();
     void Reboot();
@@ -65,9 +66,9 @@ public:
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
 
-    // 语音 UI 会话（聊天页 / 数字人页）：唤醒词仅在会话内开启。
+    // 语音 UI 会话（主页）：唤醒词仅在会话内开启。
     // desired=false：立刻软停（停 Feed / disable_wakenet），延迟硬 destroy AFE，
-    // 以便快速再进聊天/数字人时复用引擎，避免低内存下重建崩溃。
+    // 以便快速再回主页时复用引擎，避免低内存下重建崩溃。
     void SetVoiceUiDesired(bool desired);
     bool IsVoiceUiActive() const { return voice_ui_active_; }
     bool IsVoiceUiDesired() const { return voice_ui_desired_; }
@@ -116,6 +117,8 @@ private:
     std::atomic<bool> low_power_standby_{false};
     uint32_t voice_ui_pending_release_epoch_ = 0;
     uint32_t voice_ui_pending_retry_epoch_ = 0;
+    // 主页已 desired，但 AFE 尚未 active：下滑聊天先排队，会话起来后再开通道。
+    volatile bool pending_voice_ui_listen_ = false;
 
     void SyncVoiceUiSession();
     void TearDownVoiceAudioPaths(bool release_wake_word);
@@ -127,6 +130,8 @@ private:
     void CancelVoiceUiHardRelease();
     void ScheduleVoiceUiStartRetry(uint32_t epoch);
     bool TryEnableWakeWordForVoiceUi();
+    void StartVoiceChatFromIdle();
+    void FlushPendingVoiceUiListen();
 
     bool has_server_time_ = false;
     bool aborted_ = false;

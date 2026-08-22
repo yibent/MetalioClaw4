@@ -153,21 +153,8 @@ void McpServer::AddUserOnlyTools() {
         PropertyList({
             Property("url", kPropertyTypeString, "The URL of the firmware binary file to download and install")
         }),
-        [this](const PropertyList& properties) -> ReturnValue {
-            auto url = properties["url"].value<std::string>();
-            ESP_LOGI(TAG, "User requested firmware upgrade from URL: %s", url.c_str());
-            
-            auto& app = Application::GetInstance();
-            app.Schedule([url, &app]() {
-                auto ota = std::make_unique<Ota>();
-                
-                bool success = app.UpgradeFirmware(*ota, url);
-                if (!success) {
-                    ESP_LOGE(TAG, "Firmware upgrade failed");
-                }
-            });
-            
-            return true;
+        [](const PropertyList&) -> ReturnValue {
+            throw std::runtime_error("Firmware OTA is disabled on this device");
         });
 
     // Display control

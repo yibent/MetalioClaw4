@@ -3,7 +3,6 @@
 #include <atomic>
 
 #include "apps/home/home_module.h"
-#include "apps/camera/camera_module.h"
 #include "core/agent_ui_types.h"
 #include "core/global_ui_state.h"
 
@@ -33,14 +32,12 @@ private:
     static void StartTask(void* argument);
     void RunStartTask();
     static lv_obj_t* CreateHomeView();
-    static lv_obj_t* CreateCameraView();
     bool initialized_ = false;
     std::atomic<bool> start_started_{false};
     std::atomic<bool> board_ready_posted_{false};
     bool power_runtime_started_ = false;
     GlobalUiState global_state_;
     home::Module home_module_;
-    camera::Module camera_module_;
 };
 
 }  // namespace agent_ui

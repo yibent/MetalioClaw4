@@ -21,10 +21,10 @@ struct AppRoute {
 };
 
 constexpr std::array<AppRoute, 6> kAppRoutes = {{
-    {"apps", "应用", ScreenId::ClassicApps},
+    {"openclaw", "OpenClaw", ScreenId::OpenClaw},
+    {"ai_image", "生图", ScreenId::AiImageGen},
+    {"translate", "翻译", ScreenId::Translate},
     {"codex", "代码助手", ScreenId::Codex},
-    {"camera", "相机", ScreenId::Camera},
-    {"phone", "电话", ScreenId::Phone},
     {"files", "文件", ScreenId::Files},
     {"settings", "设置", ScreenId::Settings},
 }};
@@ -66,16 +66,16 @@ void RegisterAppMcpTools() {
     McpServer::GetInstance().AddTool(
         "self.app.open",
         "Open an app on this device when the user asks to open or switch to "
-        "it. The app must be one of: codex (代码助手), camera (相机), "
-        "phone (电话), files (文件), settings (设置).",
+        "it. The app must be one of: openclaw (OpenClaw), ai_image (AI生图), "
+        "translate (翻译), codex (代码助手), files (文件), settings (设置).",
         PropertyList({Property("app", kPropertyTypeString)}),
         [](const PropertyList& properties) -> ReturnValue {
             const auto requested = properties["app"].value<std::string>();
             const AppRoute* route = FindAppRoute(requested);
             if (route == nullptr) {
                 throw std::runtime_error(
-                    "Unsupported app. Use codex, camera, phone, files, or "
-                    "settings.");
+                    "Unsupported app. Use openclaw, ai_image, translate, "
+                    "codex, files, or settings.");
             }
 
             const ScreenId screen = route->screen;

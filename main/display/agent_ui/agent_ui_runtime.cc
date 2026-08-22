@@ -11,15 +11,15 @@
 #include <freertos/task.h>
 
 #include "agent_ui/apps/boot/boot_view.h"
-#include "agent_ui/apps/camera/camera_module.h"
-#include "agent_ui/apps/classic_apps/classic_apps_view.h"
+#include "agent_ui/apps/ai_image_gen/ai_image_gen_view.h"
 #include "agent_ui/apps/codex/codex_view.h"
 #include "agent_ui/apps/display_debug/display_debug_view.h"
 #include "agent_ui/apps/external_apps/external_apps_view.h"
 #include "agent_ui/apps/external_apps/external_app_manager.h"
 #include "agent_ui/apps/files/files_view.h"
-#include "agent_ui/apps/phone/phone_view.h"
+#include "agent_ui/apps/openclaw/openclaw_view.h"
 #include "agent_ui/apps/settings/settings_view.h"
+#include "agent_ui/apps/translate/translate_view.h"
 #include "agent_ui/apps/home/home_renderer.h"
 #include "agent_ui/core/app_mcp_tools.h"
 #include "agent_ui/core/idle_power.h"
@@ -70,11 +70,11 @@ void Runtime::Initialize() {
     Theme::Get().Initialize();
     Navigation::Get().Register(ScreenId::Home, CreateHomeView);
     Navigation::Get().Register(ScreenId::Codex, CodexView::Create);
-    Navigation::Get().Register(ScreenId::Camera, CreateCameraView);
-    Navigation::Get().Register(ScreenId::Phone, PhoneView::Create);
     Navigation::Get().Register(ScreenId::Files, FilesView::Create);
     Navigation::Get().Register(ScreenId::Settings, SettingsView::Create);
-    Navigation::Get().Register(ScreenId::ClassicApps, ClassicAppsView::Create);
+    Navigation::Get().Register(ScreenId::OpenClaw, OpenClawView::Create);
+    Navigation::Get().Register(ScreenId::AiImageGen, AiImageGenView::Create);
+    Navigation::Get().Register(ScreenId::Translate, TranslateView::Create);
     Navigation::Get().Register(ScreenId::ExternalAppHost,
                                external_apps::HostView::Create);
     Navigation::Get().Register(ScreenId::DisplayDebug, DisplayDebugView::Create);
@@ -158,16 +158,26 @@ void Runtime::RunStartTask() {
 }
 
 void Runtime::SetAgentState(AgentState state) {
-    // Connecting/listening/answering are active operations. In particular,
-    // voice wake reaches the UI through this path without a touch event, so it
-    // must explicitly start Wake before the new state is rendered.
-    if (state != AgentState::Idle) IdlePower::Get().NotifyActivity();
-    home_module_.HandleEvent(home::Event::AgentStateChanged(state));
-    StatusBar::Get().SetAgentState(state);
+    // MQTT / main_event_loop 不能直接碰 LVGL，否则说话中刷字幕会把 TTS stop 堵死。
+    if (!UiDispatcher::Post([this, state]() {
+            if (state != AgentState::Idle) IdlePower::Get().NotifyActivity();
+            home_module_.HandleEvent(home::Event::AgentStateChanged(state));
+            StatusBar::Get().SetAgentState(state);
+        })) {
+        ESP_LOGW(kTag, "Dropped agent state update");
+    }
 }
 
 void Runtime::SetConversationMessage(const char* role, const char* content) {
-    home_module_.HandleEvent(home::Event::ConversationMessage(role, content));
+    std::string role_str = role != nullptr ? role : "";
+    std::string content_str = content != nullptr ? content : "";
+    if (!UiDispatcher::Post([this, role_str = std::move(role_str),
+                             content_str = std::move(content_str)]() {
+            home_module_.HandleEvent(home::Event::ConversationMessage(
+                role_str.c_str(), content_str.c_str()));
+        })) {
+        ESP_LOGW(kTag, "Dropped conversation message");
+    }
 }
 
 void Runtime::SetSystemStatus(const char* status) {
@@ -180,10 +190,6 @@ void Runtime::PlayDizzyExpression() {
 
 lv_obj_t* Runtime::CreateHomeView() {
     return Get().home_module_.Mount();
-}
-
-lv_obj_t* Runtime::CreateCameraView() {
-    return Get().camera_module_.Mount();
 }
 
 }  // namespace agent_ui

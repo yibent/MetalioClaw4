@@ -25,7 +25,7 @@
 #include "audio_service.h"
 #include "board.h"
 #include "device_state.h"
-#include "home_screen/home_screen.h"
+#include "navigation.h"
 #include "screen_util.h"
 #include "system_info.h"
 
@@ -2248,12 +2248,7 @@ void on_swipe_back_home() {
     }
     lv_indev_t* indev = lv_indev_active();
     if (indev != nullptr) lv_indev_wait_release(indev);
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* home    = HomeScreen::Create();
-    lv_screen_load(home);
-    if (old_scr != nullptr && old_scr != home) {
-        lv_obj_delete_async(old_scr);
-    }
+    agent_ui::Navigation::Get().Back();
 }
 
 void on_swipe_back_to_list() {

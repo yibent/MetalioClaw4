@@ -25,8 +25,8 @@
 #include "board.h"
 #include "config.h"
 #include "device_state.h"
-#include "home_screen/home_screen.h"
 #include "http.h"
+#include "navigation.h"
 #include "lvgl_image.h"
 #include "screen_util.h"
 #include "system_info.h"
@@ -1083,12 +1083,7 @@ void on_record_released(lv_event_t* /*e*/) {
 }
 
 void on_swipe_back() {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* home = HomeScreen::Create();
-    lv_screen_load(home);
-    if (old_scr != nullptr && old_scr != home) {
-        lv_obj_delete_async(old_scr);
-    }
+    agent_ui::Navigation::Get().Back();
 }
 
 void on_back_clicked(lv_event_t* /*e*/) { on_swipe_back(); }

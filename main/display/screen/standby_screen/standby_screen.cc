@@ -8,8 +8,8 @@
 
 #include "board.h"
 #include "config.h"
-#include "home_screen/home_screen.h"
 #include "idle_power_policy.h"
+#include "navigation.h"
 #include "pwr_key_handler.h"
 
 LV_FONT_DECLARE(font_puhui_20_4);
@@ -720,10 +720,5 @@ void StandbyScreen::Show() {
 
 void StandbyScreen::ReturnHome() {
     IdlePower_NotifyActivity();
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* home = HomeScreen::Create();
-    lv_screen_load(home);
-    if (old_scr != nullptr && old_scr != home) {
-        lv_obj_delete_async(old_scr);
-    }
+    agent_ui::Navigation::Get().ReturnHome();
 }

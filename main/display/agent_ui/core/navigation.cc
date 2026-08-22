@@ -38,6 +38,14 @@ void Navigation::Back() {
     Load(target, TransitionDirection::Back, false);
 }
 
+void Navigation::ReturnHome() {
+    if (current_ == ScreenId::Home) {
+        RebuildCurrent();
+        return;
+    }
+    Open(ScreenId::Home);
+}
+
 void Navigation::RebuildCurrent() {
     Load(current_, TransitionDirection::Replace, false);
 }
@@ -60,8 +68,12 @@ void Navigation::Load(ScreenId id, TransitionDirection direction, bool update_st
         }
     }
     current_ = id;
+    Application::GetInstance().SetVoiceUiDesired(id == ScreenId::Home);
     StatusBar::Get().SetHomeActive(id == ScreenId::Home);
-    StatusBar::Get().SetVisible(id != ScreenId::ClassicApps);
+    const bool show_status_bar = id != ScreenId::OpenClaw &&
+                                 id != ScreenId::AiImageGen &&
+                                 id != ScreenId::Translate;
+    StatusBar::Get().SetVisible(show_status_bar);
 
     lv_screen_load_anim_t animation = LV_SCR_LOAD_ANIM_NONE;
     if (direction == TransitionDirection::Forward) {

@@ -23,12 +23,13 @@ public:
     const ViewState& state() const { return controller_.state(); }
 
 private:
-    void HandleCommand(const Command& command);
+    bool HandleCommand(const Command& command);
 
     NavigationSink navigation_sink_;
     Controller controller_;
     View view_;
     Adapter adapter_;
+    AgentState last_status_agent_state_ = AgentState::Idle;
 };
 
 }  // namespace agent_ui::home

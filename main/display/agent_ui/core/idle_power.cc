@@ -7,7 +7,6 @@
 #include "settings.h"
 #include "apps/home/home_renderer.h"
 #include "apps/standby/standby_view.h"
-#include "core/navigation.h"
 #include "core/performance_manager.h"
 
 namespace agent_ui {
@@ -103,13 +102,15 @@ void IdlePower::Tick() {
     const bool realtime_audio_busy =
         device_state == kDeviceStateListening ||
         application.IsCodexVoiceCaptureActive();  // always false on this board
-    const bool camera_busy =
-        Navigation::Get().current() == ScreenId::Camera;
+    const bool network_busy =
+        device_state == kDeviceStateStarting ||
+        device_state == kDeviceStateActivating ||
+        device_state == kDeviceStateUpgrading;
     auto& performance = PerformanceManager::Get();
     performance.SetDemand(PerformanceDemand::Ai, foreground_ai_busy);
     performance.SetDemand(PerformanceDemand::RealtimeAudio,
                           realtime_audio_busy);
-    performance.SetDemand(PerformanceDemand::Camera, camera_busy);
+    performance.SetDemand(PerformanceDemand::Transfer, network_busy);
     performance.Tick();
 
     if (home::Renderer::IsMounted() &&
