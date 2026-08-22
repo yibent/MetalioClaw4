@@ -8,6 +8,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <string>
 
 #include "cJSON.h"
@@ -48,7 +49,7 @@ constexpr uint32_t kRecvTimeoutMs = 60000;
 constexpr uint32_t kUiRefreshMs = 200;
 constexpr uint32_t kBackoffMinMs = 1000;
 constexpr uint32_t kBackoffMaxMs = 15000;
-constexpr int kWorkerStack = 12 * 1024;
+constexpr int kWorkerStack = 32 * 1024;
 constexpr int kIdMax = 64;
 constexpr int kEntryMax = 32;
 
@@ -453,19 +454,23 @@ void FinishJobIfDone() {
     if (!s_job_active.load(std::memory_order_acquire))
         return;
     lua_runtime_job_info_t info = {};
-    char output[LUA_RUNTIME_OUTPUT_SIZE] = {};
-    if (lua_runtime_get_job(s_job_id, &info, output, sizeof(output)) != ESP_OK)
+    std::unique_ptr<char[]> output(new (std::nothrow) char[LUA_RUNTIME_OUTPUT_SIZE]());
+    if (!output)
+        return;
+    if (lua_runtime_get_job(s_job_id, &info, output.get(), LUA_RUNTIME_OUTPUT_SIZE) != ESP_OK)
         return;
     if (info.state < LUA_RUNTIME_JOB_DONE)
         return;
 
-    char result[LUA_RUNTIME_RESULT_SIZE] = {};
-    lua_runtime_get_job_result(s_job_id, result, sizeof(result));
+    std::unique_ptr<char[]> result(new (std::nothrow) char[LUA_RUNTIME_RESULT_SIZE]());
+    if (!result)
+        return;
+    lua_runtime_get_job_result(s_job_id, result.get(), LUA_RUNTIME_RESULT_SIZE);
     const uint32_t duration_ms =
         (uint32_t)((esp_timer_get_time() - s_job_started_us) / 1000);
-    SendJobResult(s_current_req_id, info.state, output, info.output_truncated, result,
+    SendJobResult(s_current_req_id, info.state, output.get(), info.output_truncated, result.get(),
                   info.result_truncated, duration_ms);
-    SetJobFields(s_current_req_id, result[0] ? result : "null", output);
+    SetJobFields(s_current_req_id, result[0] ? result.get() : "null", output.get());
     s_job_active.store(false, std::memory_order_release);
     s_current_req_id[0] = '\0';
     if (!s_stop.load(std::memory_order_acquire) &&
