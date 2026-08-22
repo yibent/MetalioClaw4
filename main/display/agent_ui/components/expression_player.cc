@@ -185,9 +185,13 @@ ExpressionPlayer::ExpressionPlayer(
     lv_obj_center(image_);
     lv_obj_remove_flag(image_, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(image_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(image_, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_image_recolor(
         image_, lv_color_hex(Theme::Get().colors().accent), LV_PART_MAIN);
     lv_obj_set_style_image_recolor_opa(image_, LV_OPA_COVER, LV_PART_MAIN);
+    if (parent_ != nullptr) {
+        lv_obj_set_style_bg_opa(parent_, LV_OPA_TRANSP, LV_PART_MAIN);
+    }
     lv_obj_update_layout(image_);
 
     action_started_ms_ = lv_tick_get();
