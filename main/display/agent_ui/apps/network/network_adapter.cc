@@ -132,6 +132,7 @@ struct Adapter::Impl {
     esp_event_handler_instance_t ip_event_instance = nullptr;
     EventGroupHandle_t events = nullptr;
     bool wifi_station_was_active = false;
+    bool borrowed_wifi = false;
     uint8_t last_disconnect_reason = 0;
 
     void Emit(const Event& event) {
@@ -240,14 +241,7 @@ struct Adapter::Impl {
         }
     }
 
-    bool InitializeWifi() {
-        if (wifi_initialized.load(std::memory_order_acquire)) return true;
-
-        wifi_mode_t mode = WIFI_MODE_NULL;
-        const esp_err_t mode_error = esp_wifi_get_mode(&mode);
-        wifi_station_was_active = mode_error == ESP_OK && mode != WIFI_MODE_NULL;
-        if (wifi_station_was_active) WifiManager::GetInstance().StopStation();
-
+    bool EnsureWifiEventGroup() {
         if (events == nullptr) {
             events = xEventGroupCreate();
             if (events == nullptr) {
@@ -257,41 +251,25 @@ struct Adapter::Impl {
         } else {
             xEventGroupClearBits(events, kScanDone | kConnected | kDisconnected);
         }
+        return true;
+    }
 
-        esp_err_t error = esp_netif_init();
-        if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) return false;
-        error = esp_event_loop_create_default();
-        if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) return false;
-
-        netif = esp_netif_create_default_wifi_sta();
-        if (netif == nullptr) return false;
-
-        wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
-        config.nvs_enable = false;
-        error = esp_wifi_init(&config);
-        if (error != ESP_OK) {
-            netif = nullptr;
-            return false;
-        }
-
-        error = esp_event_handler_instance_register(
+    bool RegisterWifiEvents() {
+        esp_err_t error = esp_event_handler_instance_register(
             WIFI_EVENT, ESP_EVENT_ANY_ID, &WifiEvent, this, &wifi_event_instance);
         if (error != ESP_OK) return false;
         error = esp_event_handler_instance_register(
             IP_EVENT, IP_EVENT_STA_GOT_IP, &WifiEvent, this, &ip_event_instance);
-        if (error != ESP_OK) return false;
-
-        if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK || esp_wifi_start() != ESP_OK) {
-            return false;
-        }
-        wifi_initialized.store(true, std::memory_order_release);
-        return true;
+        return error == ESP_OK;
     }
 
-    void TeardownWifi() {
-        if (!wifi_initialized.exchange(false, std::memory_order_acq_rel)) return;
-        esp_wifi_scan_stop();
-        esp_wifi_disconnect();
+    bool StartStaMode() {
+        if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK) return false;
+        const esp_err_t error = esp_wifi_start();
+        return error == ESP_OK || error == ESP_ERR_WIFI_CONN;
+    }
+
+    void UnregisterWifiEvents() {
         if (wifi_event_instance != nullptr) {
             esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                   wifi_event_instance);
@@ -302,13 +280,82 @@ struct Adapter::Impl {
                                                   ip_event_instance);
             ip_event_instance = nullptr;
         }
-        esp_wifi_stop();
-        esp_wifi_deinit();
-        if (netif != nullptr) {
-            esp_netif_destroy(netif);
-            netif = nullptr;
+    }
+
+    void DestroyWifiNetif() {
+        if (netif == nullptr) return;
+        esp_netif_destroy_default_wifi(netif);
+        netif = nullptr;
+    }
+
+    bool InitializeWifi() {
+        if (wifi_initialized.load(std::memory_order_acquire)) return true;
+        if (!EnsureWifiEventGroup()) return false;
+
+        auto& wifi = WifiManager::GetInstance();
+        borrowed_wifi = wifi.IsInitialized();
+        wifi_station_was_active = borrowed_wifi;
+        if (borrowed_wifi) {
+            wifi.StopStation();
+        } else {
+            wifi_mode_t mode = WIFI_MODE_NULL;
+            if (esp_wifi_get_mode(&mode) == ESP_OK && mode != WIFI_MODE_NULL) {
+                wifi_station_was_active = true;
+                wifi.StopStation();
+            }
         }
-        if (wifi_station_was_active) WifiManager::GetInstance().StartStation();
+
+        wifi_mode_t mode = WIFI_MODE_NULL;
+        const bool driver_alive = esp_wifi_get_mode(&mode) == ESP_OK;
+        if (!driver_alive) {
+            esp_err_t error = esp_netif_init();
+            if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) return false;
+            error = esp_event_loop_create_default();
+            if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) return false;
+
+            netif = esp_netif_create_default_wifi_sta();
+            if (netif == nullptr) return false;
+
+            wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
+            config.nvs_enable = false;
+            error = esp_wifi_init(&config);
+            if (error != ESP_OK) {
+                netif = nullptr;
+                return false;
+            }
+        } else if (netif == nullptr) {
+            netif = esp_netif_create_default_wifi_sta();
+        }
+
+        if (!RegisterWifiEvents() || !StartStaMode()) return false;
+        wifi_initialized.store(true, std::memory_order_release);
+        return true;
+    }
+
+    void TeardownWifi() {
+        if (!wifi_initialized.exchange(false, std::memory_order_acq_rel)) return;
+        esp_wifi_scan_stop();
+        esp_wifi_disconnect();
+        UnregisterWifiEvents();
+        esp_wifi_stop();
+        DestroyWifiNetif();
+
+        // WifiManager 在整个进程里拥有驱动。扫描时只是 StopStation，退出时
+        // 绝不能 deinit，否则 StartStation() 里 ESP_ERROR_CHECK(set_mode)
+        // 会因 ESP_ERR_WIFI_NOT_INIT abort。
+        if (borrowed_wifi) {
+            borrowed_wifi = false;
+            if (wifi_station_was_active) {
+                WifiManager::GetInstance().StartStation();
+            }
+            wifi_station_was_active = false;
+            return;
+        }
+
+        esp_wifi_deinit();
+        if (wifi_station_was_active) {
+            WifiManager::GetInstance().StartStation();
+        }
         wifi_station_was_active = false;
     }
 
@@ -824,6 +871,8 @@ struct Adapter::Impl {
         if (events != nullptr) {
             xEventGroupSetBits(events, kScanDone | kConnected | kDisconnected);
         }
+        // Unblock scan/connect waiters, then drop our WiFi handlers. Do not
+        // delay here: Stop() runs on the LVGL thread during screen delete.
         TeardownWifi();
         scan_in_progress.store(false, std::memory_order_release);
         connect_in_progress.store(false, std::memory_order_release);
