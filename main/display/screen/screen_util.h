@@ -51,7 +51,7 @@ void screen_swipe_back_ignore(lv_obj_t* obj, bool recursive = true);
 // to do per-screen logging, telemetry, or to start / stop background work
 // that should run only while the screen is on stage.
 //
-//   void weather_lifecycle_cb(screen_lifecycle_event_t event) {
+//   void screen_lifecycle_cb(screen_lifecycle_event_t event) {
 //       if (event == SCREEN_LIFECYCLE_LOAD) { ... }
 //       else { ... }
 //   }

@@ -62,7 +62,7 @@ public:
     Nt26CeregState GetRegistrationState();
 
     // 转发到 UartEthModem::SendAt。线程安全（modem 内部用 mutex 串行化）。
-    // 在 modem 还没初始化、或 ML307/4G 网络未就绪时返回 ESP_ERR_INVALID_STATE。
+    // 在 modem 还没初始化、或 4G 网络未就绪时返回 ESP_ERR_INVALID_STATE。
     // 给 UI 屏幕（如 CallScreen）拨号 / 挂断用：
     //   SendAtCommand("ATD17880684667", resp);  -> 返回 ESP_OK 且 resp 含 "OK"
     //   SendAtCommand("ATH", resp);

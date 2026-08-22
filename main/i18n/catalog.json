@@ -300,11 +300,6 @@
       "en-US": "Pressure"
     },
     {
-      "key": "TEST",
-      "zh-CN": "测试",
-      "en-US": "Test"
-    },
-    {
       "key": "S_DBB8AAC7",
       "zh-CN": "浮尘",
       "en-US": "Dust"
@@ -740,31 +735,6 @@
       "en-US": "District ID"
     },
     {
-      "key": "TEST_2",
-      "zh-CN": "压力测试",
-      "en-US": "Stress Test"
-    },
-    {
-      "key": "SCREEN_COLOR_TEST",
-      "zh-CN": "屏幕测试",
-      "en-US": "Screen Test"
-    },
-    {
-      "key": "TOUCH_PANEL_TEST",
-      "zh-CN": "触摸测试",
-      "en-US": "Touch Test"
-    },
-    {
-      "key": "TOUCH_TAP_TARGET_HINT",
-      "zh-CN": "点击圆点 (%d/%d)",
-      "en-US": "Tap the dot (%d/%d)"
-    },
-    {
-      "key": "TOUCH_PAINT_HINT",
-      "zh-CN": "请涂满全屏，检查触摸盲区",
-      "en-US": "Paint the screen to find dead zones"
-    },
-    {
       "key": "BACK_2",
       "zh-CN": "右滑返回",
       "en-US": "Back"
@@ -818,11 +788,6 @@
       "key": "S_9594A2B9",
       "zh-CN": "屏幕亮度",
       "en-US": "Screen brightness"
-    },
-    {
-      "key": "PIN_TEST",
-      "zh-CN": "引脚测试",
-      "en-US": "Pin Test"
     },
     {
       "key": "S_A1E62546",
@@ -925,16 +890,6 @@
       "en-US": "Never enter"
     },
     {
-      "key": "TEST_3",
-      "zh-CN": "测试中…",
-      "en-US": "Test …"
-    },
-    {
-      "key": "TEST_4",
-      "zh-CN": "测试失败",
-      "en-US": "Test Failed"
-    },
-    {
       "key": "CLEAR_3",
       "zh-CN": "清空会话",
       "en-US": "Clear sessions"
@@ -965,11 +920,6 @@
       "en-US": "Power options"
     },
     {
-      "key": "TEST_5",
-      "zh-CN": "硬件测试",
-      "en-US": "Hardware Test"
-    },
-    {
       "key": "SYSTEM_INFO",
       "zh-CN": "系统信息",
       "en-US": "System Info"
@@ -998,11 +948,6 @@
       "key": "AUTO_POWER_OFF",
       "zh-CN": "自动关机",
       "en-US": "Auto power off"
-    },
-    {
-      "key": "TEST_6",
-      "zh-CN": "自动测试",
-      "en-US": "Auto Test"
     },
     {
       "key": "S_45982737",
@@ -1140,19 +1085,9 @@
       "en-US": "Rebooting…"
     },
     {
-      "key": "TEST_CANCEL",
-      "zh-CN": "测试已取消",
-      "en-US": "Test Cancel"
-    },
-    {
       "key": "S_2",
       "zh-CN": "用时 %s",
       "en-US": "Time %s"
-    },
-    {
-      "key": "TEST_7",
-      "zh-CN": "等待测试…",
-      "en-US": "Test…"
     },
     {
       "key": "S_F309E394",
@@ -1258,11 +1193,6 @@
       "key": "DELETE_5",
       "zh-CN": "已删除该网络",
       "en-US": "Network deleted"
-    },
-    {
-      "key": "START_TEST",
-      "zh-CN": "开始压力测试",
-      "en-US": "Start Stress Test"
     },
     {
       "key": "S_8ACC2CD8",
@@ -2666,8 +2596,23 @@
     },
     {
       "key": "LUA_AGENT_HINT",
-      "zh-CN": "打开后自动连接，等待服务端下发 Lua 脚本",
-      "en-US": "Connects automatically and waits for Lua scripts"
+      "zh-CN": "进入聊天后自动连接，等待服务端下发 Lua 脚本",
+      "en-US": "Connects from chat and waits for Lua scripts"
+    },
+    {
+      "key": "LUA_AGENT_TIMEOUT",
+      "zh-CN": "脚本超时",
+      "en-US": "Script timed out"
+    },
+    {
+      "key": "LUA_AGENT_CANCELLED",
+      "zh-CN": "脚本已取消",
+      "en-US": "Script cancelled"
+    },
+    {
+      "key": "LUA_AGENT_FAILED",
+      "zh-CN": "脚本运行失败",
+      "en-US": "Script failed"
     }
   ]
 }

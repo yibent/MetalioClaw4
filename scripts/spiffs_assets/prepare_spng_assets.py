@@ -85,9 +85,6 @@ def prepare_assets(source_dir: Path, output_dir: Path, icon_glob: str,
             resize_square_icon(path, icon_size)
             matched += 1
 
-    if matched == 0:
-        raise ValueError(f"no PNG assets matched desktop icon glob: {icon_glob}")
-
     boot_image_path = output_dir / boot_image
     if not boot_image_path.is_file():
         raise ValueError(f"boot image does not exist: {boot_image_path}")
@@ -95,7 +92,10 @@ def prepare_assets(source_dir: Path, output_dir: Path, icon_glob: str,
         boot_image_path, boot_image_max_width, boot_image_max_height
     )
 
-    print(f"Prepared {matched} desktop icons for {icon_size}x{icon_size} SPNG output")
+    if matched == 0:
+        print(f"No desktop icons matched {icon_glob}; skipped icon resize")
+    else:
+        print(f"Prepared {matched} desktop icons for {icon_size}x{icon_size} SPNG output")
     if native_copies:
         print(f"Preserved {native_copies} native-size preview icons")
 

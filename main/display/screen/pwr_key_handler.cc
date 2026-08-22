@@ -6,8 +6,7 @@
 #include "lvgl.h"
 
 #include "IOExpander.hpp"
-#include "application.h"
-#include "home_screen/home_screen.h"
+#include "power_view.h"
 #include "standby_screen/standby_screen.h"
 
 namespace {
@@ -23,10 +22,6 @@ constexpr int kMaxStack = 8;
 const char* s_stack[kMaxStack] = {};
 int s_depth = 0;
 bool s_inited = false;
-
-bool IsChatToggleScreen(const char* name) {
-    return std::strcmp(name, "chat") == 0;
-}
 
 void StackPush(const char* name) {
     if (name == nullptr || name[0] == '\0') {
@@ -80,17 +75,11 @@ void OnShortPress() {
         return;
     }
 
-    if (IsChatToggleScreen(screen)) {
-        ESP_LOGI(TAG, "dispatch: ToggleChatState()");
-        Application::GetInstance().ToggleChatState();
-        return;
-    }
-
     ESP_LOGI(TAG, "dispatch: no-op (screen has no short-press action)");
 }
 
 void OnLongPressAsync(void* /*arg*/) {
-    HomeScreen::ShowPowerOptionsDialog();
+    agent_ui::PowerView::ShowDialog();
 }
 
 void OnLongPress() {
@@ -124,7 +113,7 @@ void PwrKey_Init() {
     }
 
     s_inited = true;
-    s_depth = 0;  // 等 HomeScreen LOAD 再入栈，避免残留假 "home"
+    s_depth = 0;  // 等各页面 LOAD 再入栈，避免残留假 "home"
     ESP_LOGI(TAG,
              "armed: short-press + long-press %ums (active_screen=%s)",
              static_cast<unsigned>(kLongPressMs), PwrKey_ActiveScreen());

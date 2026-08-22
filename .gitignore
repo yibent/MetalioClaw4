@@ -3,6 +3,8 @@ tmp/
 components/*
 !components/lua_runtime/
 !components/lua_runtime/**
+!components/xiaozhi_network/
+!components/xiaozhi_network/**
 managed_components/
 build/
 .vscode/

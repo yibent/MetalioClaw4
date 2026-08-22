@@ -25,8 +25,8 @@
 
 #define MIPI_DPI_PX_FORMAT         (LCD_COLOR_PIXEL_FORMAT_RGB565)
 #define DISPLAY_SWAP_XY false
-#define DISPLAY_MIRROR_X false
-#define DISPLAY_MIRROR_Y false
+#define DISPLAY_MIRROR_X true
+#define DISPLAY_MIRROR_Y true
 #define BACKLIGHT_INVERT false
 
 #define DISPLAY_OFFSET_X  0
@@ -34,6 +34,8 @@
 
 #define DISPLAY_WIDTH 480
 #define DISPLAY_HEIGHT 800
+#define DISPLAY_H_RES DISPLAY_WIDTH
+#define DISPLAY_V_RES DISPLAY_HEIGHT
 
 #define LCD_H_RES                  (480)
 #define LCD_V_RES                  (800)
@@ -53,6 +55,7 @@
 #define LCD_TOUCH_RST       GPIO_NUM_22
 #define LCD_TOUCH_INT       GPIO_NUM_21
 #define LCD_TOUCH_SWAP_XY   false
+// LVGL ROTATION_180 already remaps pointer coords; keep GT911 in panel space.
 #define LCD_TOUCH_MIRROR_X  false
 #define LCD_TOUCH_MIRROR_Y  false
 
@@ -69,5 +72,13 @@
 // USB OTG FS PHY0（与 USB Serial/JTAG 共用）：启用虚拟 U 盘时切到 OTG MSC
 #define USB_OTG_DM_PIN  GPIO_NUM_24
 #define USB_OTG_DP_PIN  GPIO_NUM_25
+
+// Battery voltage sense: GPIO53 = ESP32-P4 ADC2_CH4, 68k upper / 100k lower.
+// Charge-status pin is not wired to P4.
+#define BATTERY_ADC_GPIO           GPIO_NUM_53
+#define BATTERY_ADC_UNIT           ADC_UNIT_2
+#define BATTERY_ADC_CHANNEL        ADC_CHANNEL_4
+#define BATTERY_UPPER_RESISTOR     68000.0f
+#define BATTERY_LOWER_RESISTOR     100000.0f
 
 #endif // _BOARD_CONFIG_H_

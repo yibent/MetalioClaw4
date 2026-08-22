@@ -1,10 +1,11 @@
-# ESP-IDF Partition Table - 16MB MetalioClaw4 single system
+# ESP-IDF Partition Table - 16MB MetalioClaw4 / Fangtang JC4880P443
 # Partition table offset: 0x9000
+# Flash is 16MB. factory_test was dropped; model/resources are sized to the
+# actual payloads (srmodels ~286K, resources ~865K) so ota_0 can grow.
 # Name,         Type, SubType, Offset,    Size,       Flags
 nvs,            data, nvs,     0xA000,    64K,
 otadata,        data, ota,                ,  8K,
 phy_init,       data, phy,                ,  4K,
-model,          data, spiffs,             ,  1M,
-ota_0,          app,  ota_0,   0x120000,  0x980000,
-resources,      data, spiffs,             ,  4M,
-factory_test,   data, spiffs,             , 1408K,
+model,          data, spiffs,             ,  384K,
+ota_0,          app,  ota_0,   0x80000,   0xE80000,
+resources,      data, spiffs,  0xF00000,  1M,

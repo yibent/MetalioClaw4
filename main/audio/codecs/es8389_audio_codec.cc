@@ -1,5 +1,6 @@
 #include "es8389_audio_codec.h"
 
+#include <driver/gpio.h>
 #include <esp_log.h>
 
 static const char TAG[] = "Es8389AudioCodec";

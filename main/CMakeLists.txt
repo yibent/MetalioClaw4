@@ -24,50 +24,22 @@ set(SOURCES "audio/audio_codec.cc"
             "display/touch_feed.cc"
             "display/font/font_puhui_number_50_4.c"
             "display/font/font_puhui_number_120_4.c"
+            "display/font/font_agent_small_bold_18.c"
+            "display/font/font_agent_medium_bold_28.c"
+            "display/font/font_agent_large_bold_56.c"
+            "display/font/font_agent_home_name_bold_35.c"
+            "display/font/font_agent_home_number_bold_70.c"
+            "display/ui_dispatcher.cc"
+            "ai_provider_config.cc"
+            "hermes_voice_session.cc"
             "i18n/i18n.cc"
             "display/screen/screen_util.cc"
-            "display/screen/wifi_required_dialog.cc"
             "display/screen/idle_power_policy.cc"
             "display/screen/pwr_key_handler.cc"
             "display/screen/boot_screen/boot_screen.cc"
             "display/screen/ota_screen/ota_screen.cc"
-            "display/screen/home_screen/home_screen.cc"
-            "display/screen/info_screen/info_screen.cc"
             "display/screen/standby_screen/standby_screen.cc"
-            "display/screen/game_2048_screen/game_2048_screen.cc"
-            "display/screen/lua_dinosaur_screen/lua_dinosaur_screen.cc"
-            "display/screen/lua_agent_screen/lua_agent_screen.cc"
-            "display/screen/calculator_screen/calculator_screen.cc"
-            "display/screen/calendar_screen/calendar_screen.cc"
-            "display/screen/weather_screen/weather_screen.cc"
-            "display/screen/weather_screen/weather_icon_map.cc"
-            "display/screen/weather_screen/weather_city_list.cc"
-            "display/screen/camera_screen/camera_screen.cc"
-            "display/screen/backlight_screen/backlight_screen.cc"
-            "display/screen/settings_screen/settings_screen.cc"
-            "display/screen/bluetooth_screen/bluetooth_screen.cc"
-            "display/screen/chat_screen/chat_screen.cc"
-            "display/screen/network_screen/network_screen.cc"
-            "display/screen/sd_card_screen/sd_card_screen.cc"
-            "display/screen/pin_test_screen/pin_test_screen.cc"
-            "display/screen/test_screen/test_screen.cc"
-            "display/screen/test_screen/auto_test_screen.cc"
-            "display/screen/test_screen/stress_test_screen.cc"
-            "display/screen/test_screen/test_ui_common.cc"
-            "display/screen/test_screen/vibrate_motor_test.cc"
-            "display/screen/test_screen/audio_test.cc"
-            "display/screen/test_screen/camera_test.cc"
-            "display/screen/test_screen/sc7a20h_test.cc"
-            "display/screen/test_screen/qmc6309_test.cc"
-            "display/screen/test_screen/sd_card_test.cc"
-            "display/screen/test_screen/cell_4g_test.cc"
-            "display/screen/test_screen/wifi_test.cc"
-            "display/screen/test_screen/gps_test.cc"
-            "display/screen/test_screen/bq27220_test.cc"
-            "display/screen/test_screen/nu1680_test.cc"
-            "display/screen/test_screen/pin_gpio_test.cc"
-            "display/screen/test_screen/screen_color_test.cc"
-            "display/screen/test_screen/touch_panel_test.cc"
+            "lua_agent_session.cc"
             "display/screen/openclaw_screen/openclaw_screen.cc"
             "display/screen/ai_image_gen_screen/ai_image_gen_screen.cc"
             "display/screen/translate_screen/translate_screen.cc"
@@ -93,10 +65,20 @@ set(SOURCES "audio/audio_codec.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "i18n" "display" "display/font" "display/lvgl_display" "display/lvgl_display/jpg" "display/screen" "display/screen/boot_screen" "display/screen/ota_screen" "display/screen/home_screen" "display/screen/game_2048_screen" "display/screen/lua_dinosaur_screen" "display/screen/lua_agent_screen" "display/screen/calculator_screen" "display/screen/calendar_screen" "display/screen/weather_screen" "display/screen/camera_screen" "display/screen/backlight_screen" "display/screen/settings_screen" "display/screen/bluetooth_screen" "display/screen/chat_screen" "display/screen/network_screen" "display/screen/sd_card_screen" "display/screen/pin_test_screen" "display/screen/test_screen" "display/screen/openclaw_screen" "display/screen/ai_image_gen_screen" "display/screen/translate_screen" "display/screen/info_screen" "display/screen/standby_screen" "audio" "protocols")
+set(INCLUDE_DIRS "." "i18n" "display" "display/font" "display/lvgl_display" "display/lvgl_display/jpg" "display/screen" "display/screen/boot_screen" "display/screen/ota_screen" "display/screen/openclaw_screen" "display/screen/ai_image_gen_screen" "display/screen/translate_screen" "display/screen/standby_screen" "audio" "protocols")
+
+include("${CMAKE_CURRENT_LIST_DIR}/display/agent_ui/sources.cmake")
+list(APPEND SOURCES ${AGENT_UI_SOURCES})
+list(APPEND SOURCES "display/agent_ui/core/performance_manager.cc")
+list(APPEND SOURCES "display/agent_ui/core/app_mcp_tools.cc")
+list(APPEND SOURCES "display/agent_ui/components/ui_components.cc")
+list(APPEND INCLUDE_DIRS ${AGENT_UI_INCLUDE_DIRS})
 
 # Add board common files
 file(GLOB BOARD_COMMON_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/boards/common/*.cc)
+if(CONFIG_BOARD_TYPE_FANGTANG_JC4880P443)
+    list(FILTER BOARD_COMMON_SOURCES EXCLUDE REGEX "/(bq27220_gauge|cx25601n)\\.cc$")
+endif()
 list(APPEND SOURCES ${BOARD_COMMON_SOURCES})
 list(APPEND INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/boards/common)
 
@@ -278,12 +260,20 @@ endif()
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
+                    REQUIRES xiaozhi_network
+                              lua_runtime
+                              # opus_encoder.h exposes opus.h from this component.
+                              78__esp-opus
+                              espressif__zlib
+                    PRIV_REQUIRES esp_psram
+                                  esp_app_format
+                                  app_update
+                                  spi_flash
+                                  efuse
+                                  usb
+                                  esp_driver_ppa
                     WHOLE_ARCHIVE
                     )
-
-target_add_binary_data(${COMPONENT_LIB}
-    "${PROJECT_DIR}/components/lua_runtime/examples/dinosaur_game.lua"
-    TEXT RENAME_TO lua_dinosaur_game)
 
 target_link_libraries(${COMPONENT_LIB} PRIVATE idf::esp_driver_tsens)
 
@@ -507,32 +497,3 @@ spiffs_create_partition_assets(
     MMAP_SPLIT_HEIGHT 16
 ) 
 add_dependencies(assets_resources_bin prepare_resource_assets)
-
-set(STRESS_ASSET_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/factory-test-assets")
-set(PREPARED_STRESS_ASSETS_DIR "${CMAKE_BINARY_DIR}/prepared_factory-test-assets")
-file(GLOB STRESS_ASSET_INPUTS CONFIGURE_DEPENDS
-    "${STRESS_ASSET_SOURCE_DIR}/stress_test.gif"
-    "${STRESS_ASSET_SOURCE_DIR}/stress_test_music.ogg")
-add_custom_target(prepare_stress_assets
-    COMMAND ${python}
-            "${PROJECT_DIR}/scripts/prepare_stress_assets.py"
-            --source "${STRESS_ASSET_SOURCE_DIR}"
-            --output "${PREPARED_STRESS_ASSETS_DIR}"
-            --max-width 480
-            --max-height 480
-            --max-fps 20
-            --gif-colors 128
-            --audio-bitrate 24k
-            --audio-rate 16000
-            --max-total-bytes 1150000
-    DEPENDS
-        "${PROJECT_DIR}/scripts/prepare_stress_assets.py"
-        ${STRESS_ASSET_INPUTS}
-    COMMENT "Preparing compressed GIF and music stress-test assets"
-    VERBATIM)
-
-spiffs_create_partition_image(
-    factory_test
-    "${PREPARED_STRESS_ASSETS_DIR}"
-    FLASH_IN_PROJECT)
-add_dependencies(spiffs_factory_test_bin prepare_stress_assets)

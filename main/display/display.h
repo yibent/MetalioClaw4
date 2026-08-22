@@ -25,6 +25,12 @@ private:
     std::string name_;
 };
 
+enum class DisplayDiagnosticPattern {
+    None = 0,
+    ColorBarsVertical,
+    ColorBarsHorizontal,
+};
+
 class Display {
 public:
     Display();
@@ -39,6 +45,8 @@ public:
     virtual Theme* GetTheme() { return current_theme_; }
     virtual void UpdateStatusBar(bool update_all = false);
     virtual void SetPowerSaveMode(bool on);
+    virtual bool SetPowerSaveModeChecked(bool on);
+    virtual bool SetDiagnosticPattern(DisplayDiagnosticPattern pattern);
 
     inline int width() const { return width_; }
     inline int height() const { return height_; }

@@ -79,6 +79,13 @@ void WebsocketProtocol::CloseAudioChannel() {
     websocket_.reset();
 }
 
+void WebsocketProtocol::CancelOpenAudioChannel() {
+    if (event_group_handle_ != nullptr) {
+        xEventGroupSetBits(event_group_handle_,
+                           WEBSOCKET_PROTOCOL_CANCEL_OPEN_EVENT);
+    }
+}
+
 bool WebsocketProtocol::OpenAudioChannel() {
     Settings settings("websocket", false);
     std::string url = settings.GetString("url");
@@ -89,6 +96,13 @@ bool WebsocketProtocol::OpenAudioChannel() {
     }
 
     error_occurred_ = false;
+    xEventGroupClearBits(event_group_handle_,
+                         WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
+    if (Application::GetInstance().IsVoiceSessionAborted()) {
+        return false;
+    }
+    xEventGroupClearBits(event_group_handle_,
+                         WEBSOCKET_PROTOCOL_CANCEL_OPEN_EVENT);
 
     auto network = Board::GetInstance().GetNetwork();
     websocket_ = network->CreateWebSocket(1);
@@ -178,6 +192,10 @@ bool WebsocketProtocol::OpenAudioChannel() {
         SetError(Lang::Strings::SERVER_NOT_CONNECTED);
         return false;
     }
+    if (Application::GetInstance().IsVoiceSessionAborted()) {
+        CloseAudioChannel();
+        return false;
+    }
 
     // Send hello message to describe the client
     auto message = GetHelloMessage();
@@ -186,7 +204,16 @@ bool WebsocketProtocol::OpenAudioChannel() {
     }
 
     // Wait for server hello
-    EventBits_t bits = xEventGroupWaitBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(10000));
+    EventBits_t bits = xEventGroupWaitBits(
+        event_group_handle_,
+        WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT |
+            WEBSOCKET_PROTOCOL_CANCEL_OPEN_EVENT,
+        pdTRUE, pdFALSE, pdMS_TO_TICKS(10000));
+    if (bits & WEBSOCKET_PROTOCOL_CANCEL_OPEN_EVENT) {
+        ESP_LOGI(TAG, "Open audio channel cancelled");
+        CloseAudioChannel();
+        return false;
+    }
     if (!(bits & WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT)) {
         ESP_LOGE(TAG, "Failed to receive server hello");
         SetError(Lang::Strings::SERVER_TIMEOUT);

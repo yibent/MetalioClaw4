@@ -1,5 +1,6 @@
 #include "es8311_audio_codec.h"
 
+#include <driver/gpio.h>
 #include <esp_log.h>
 
 #define TAG "Es8311AudioCodec"

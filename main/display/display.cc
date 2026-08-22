@@ -54,3 +54,13 @@ void Display::SetTheme(Theme* theme) {
 void Display::SetPowerSaveMode(bool on) {
     ESP_LOGW(TAG, "SetPowerSaveMode: %d", on);
 }
+
+bool Display::SetPowerSaveModeChecked(bool on) {
+    SetPowerSaveMode(on);
+    return true;
+}
+
+bool Display::SetDiagnosticPattern(DisplayDiagnosticPattern pattern) {
+    (void)pattern;
+    return false;
+}

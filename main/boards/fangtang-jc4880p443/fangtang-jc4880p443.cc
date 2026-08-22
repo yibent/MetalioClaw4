@@ -6,6 +6,7 @@
 #include "board_hardware.h"
 #include "config.h"
 #include "led/single_led.h"
+#include "adc_battery_monitor.h"
 
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_interface.h"
@@ -57,6 +58,19 @@ extern "C" esp_lcd_touch_handle_t board_get_touch(void) {
 
 extern "C" esp_err_t board_recover_lcd_after_camera(void) {
     // The JC4880P443 camera path does not share the ST7701 reset line.
+    return ESP_OK;
+}
+
+extern "C" esp_lcd_panel_io_handle_t metalio_claw_4_get_panel_io() {
+    return s_fangtang_panel_io;
+}
+
+extern "C" i2c_master_bus_handle_t metalio_claw_4_get_i2c_bus() {
+    return s_fangtang_i2c_bus;
+}
+
+extern "C" esp_err_t esp_lcd_nv3051f_replay_vendor_init(esp_lcd_panel_io_handle_t io) {
+    (void)io;
     return ESP_OK;
 }
 
@@ -118,6 +132,7 @@ class jc4880p443 : public WifiBoard {
 private:
     i2c_master_bus_handle_t codec_i2c_bus_;
     Button boot_button_;
+    AdcBatteryMonitor battery_monitor_;
     MipiLcdDisplay* display__;
 
     void InitializeCodecI2c() {
@@ -305,7 +320,13 @@ private:
     // }
 
 public:
-    jc4880p443() : boot_button_(BOOT_BUTTON_GPIO) {
+    jc4880p443()
+        : boot_button_(BOOT_BUTTON_GPIO),
+          battery_monitor_(BATTERY_ADC_UNIT, BATTERY_ADC_CHANNEL, BATTERY_UPPER_RESISTOR,
+                           BATTERY_LOWER_RESISTOR, GPIO_NUM_NC) {
+        ESP_LOGI(TAG, "Battery ADC GPIO%d (ADC2_CH%d), divider %.0f/%.0f ohm",
+                 BATTERY_ADC_GPIO, BATTERY_ADC_CHANNEL, BATTERY_UPPER_RESISTOR,
+                 BATTERY_LOWER_RESISTOR);
 
         InitializeCodecI2c();
         // InitializeIot();
@@ -337,6 +358,14 @@ public:
     virtual Backlight* GetBacklight() override {
         static PwmBacklight backlight(PIN_NUM_BK_LIGHT, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
         return &backlight;
+    }
+
+    virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
+        // Charge IC status is not connected to P4; never report charging.
+        charging = false;
+        discharging = true;
+        level = battery_monitor_.GetBatteryLevel();
+        return true;
     }
 
 };

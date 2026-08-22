@@ -1,6 +1,6 @@
 # Lua Agent Protocol (LAP) v1
 
-设备端 App「远程脚本」打开后，会与后端建立 WebSocket，上报设备信息，然后等待服务端下发 Lua 脚本。设备用本地 `lua_runtime` 执行脚本，调用全局函数 `main`（可配置），把返回值以 JSON 发回。
+设备进入聊天主界面后，会与后端建立 WebSocket，上报设备信息，然后等待服务端下发 Lua 脚本。设备用本地 `lua_runtime` 执行脚本，调用全局函数 `main`（可配置），把返回值以 JSON 发回，并把脚本输出显示在聊天里。脚本如果创建了 UI，会临时盖在聊天之上，结束后回到聊天。
 
 本文是后端实现说明。设备端已按此协议落地。
 
@@ -39,16 +39,16 @@ wss://max.sh.creativone.cn/api/device-ws/v1
 
 ### 生命周期
 
-1. App 打开 → 连接 WebSocket
+1. 聊天就绪 → 连接 WebSocket
 2. 连接成功后设备立刻发送 `hello`，不必等服务端先说话
 3. 服务端可回 `hello_ok`（可选）
 4. 服务端随时发送 `run` 或 `speak`
 5. 设备执行完 / 播完回 `result`
 6. 任一方可 `ping` / `pong`
 7. 服务端可用 `cancel` 取消当前任务
-8. App 关闭或断线时设备会停掉正在跑的 Lua 任务并断开
+8. 断线时设备会停掉正在跑的 Lua 任务并自动重连
 
-设备在 App 打开期间会自动重连：1s、2s、4s…上限 15s。重连后重新发 `hello`。
+聊天会话期间会自动重连：1s、2s、4s…上限 15s。重连后重新发 `hello`。
 
 同一时刻只跑 **一个** Lua 任务。再来 `run` 会立刻 `result`，`status=rejected`，`error.code=busy`。
 
@@ -405,7 +405,7 @@ function main(args)
 end
 ```
 
-脚本也可以建 UI（`require("ui")`）。任务结束或取消后，界面会回到「远程脚本」状态页。长时间 UI 循环请自己查 `runtime.cancelled()`，并考虑把 `timeout_ms` 设为 `0`。
+脚本也可以建 UI（`require("ui")`）。任务结束或取消后，界面会回到聊天。长时间 UI 循环请自己查 `runtime.cancelled()`，并考虑把 `timeout_ms` 设为 `0`。
 
 CubeMax「编程 / 应用 / 智能交互」节点会下发下面这些脚本 API（Claw4 实现为准）：
 
@@ -489,7 +489,7 @@ asyncio.run(main())
 - 键：`url`
 - 值：`ws://<电脑局域网 IP>:8080`
 
-然后打开桌面上的「远程脚本」。
+然后进入聊天主界面即可。会话会自动连接。
 
 ## 8. 建议的服务端职责
 

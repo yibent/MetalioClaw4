@@ -51,7 +51,7 @@
 #include "bq27220_gauge.h"
 #include "cx25601n.h"
 #include "bt_audio_codec.h"
-#include "display/screen/bluetooth_screen/bluetooth_screen.h"
+#include "bluetooth_module.h"
 #include "settings.h"
 
 #include "driver/temperature_sensor.h"
@@ -65,9 +65,7 @@
 
 static std::string uartBuffer;
 
-// NV3051F panel IO 的全局句柄，供功能界面（如相机界面）在摄像头驱动
-// 对共享 GPIO 3 复位线发出脉冲后重放厂商 DCS 初始化序列。
-// 在 InitializeLCD() 中赋值。
+// NV3051F panel IO 的全局句柄。在 InitializeLCD() 中赋值。
 static esp_lcd_panel_io_handle_t s_metalio_claw_4_panel_io = NULL;
 static esp_lcd_panel_handle_t s_metalio_claw_4_panel = NULL;
 static esp_lcd_touch_handle_t s_metalio_claw_4_touch = NULL;
@@ -204,7 +202,6 @@ private:
         iOExpander.setLevel(IOExpander::Pin::PA_SWITCH, true);
         iOExpander.setLevel(IOExpander::Pin::RST_4G, true);
         // CAM_PWDN: 低电平通电；这里默认拉高 = 摄像头断电。
-        // 只有进入相机 App 时（CameraScreen::LifecycleCallback LOAD）才拉低供电。
         iOExpander.setLevel(IOExpander::Pin::CAM_PWDN, true);
         iOExpander.setLevel(IOExpander::Pin::SD, false);
 
@@ -227,9 +224,7 @@ private:
             return;
         }
         // 设备开机默认进入蓝牙模式1（AT+RX=2 -> AT+MODE=1，接收模式）。
-        // ApplyDefaultMode() 内部用独立 FreeRTOS task 发送 AT 命令，UI 未
-        // 起来阶段调用是安全的（post_status / lv_async_call 都有守卫）。
-        BluetoothScreen::ApplyDefaultMode();
+        agent_ui::bluetooth::Module::InitializeHardware();
     }
 
     static esp_err_t bsp_enable_dsi_phy_power(void) {
@@ -248,7 +243,7 @@ private:
     }
 
     // 开机就把 SD 卡挂到 /sdcard。失败不致命（卡没插 / 没格式化都会失败），
-    // 业务页面（SdCardScreen）通过 SdCardManager::IsMounted() 判断状态。
+    // 文件等业务页面通过 SdCardManager::IsMounted() 判断状态。
     void InitializeSdCard() {
         if (!SdCardManager::GetInstance().Mount()) {
             ESP_LOGW(TAG, "SD card not mounted at boot (card may be absent)");
@@ -330,8 +325,6 @@ private:
         ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
         // ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
-        // 暴露 panel IO 句柄，供其他组件（相机界面）在 GPIO 3 摄像头
-        // 复位脉冲后重放厂商 DCS 初始化序列。
         s_metalio_claw_4_panel_io = panel_io_handle;
     }
 
@@ -410,9 +403,6 @@ private:
         ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
         // ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
-        // 暴露 panel IO 句柄，供其他组件（相机界面）在 GPIO 3 摄像头
-        // 复位脉冲后重放厂商 DCS 初始化序列。
-        // FL7707N 当前没有相机复位后的 vendor init replay 实现。
         s_metalio_claw_4_panel_io = panel_io_handle;
     }
 
@@ -622,7 +612,7 @@ public:
         CheckBatteryLevelAtBoot();
         InitializeBTAudio();
         // SD 卡的 LDO（chan 4）在 InitializeSDWIFIPower() 里已经打开，这里
-        // 直接挂载，进入 SdCardScreen 时就能直接看状态、不需要再 mount。
+        // 直接挂载，进入文件等页面时就能直接看状态、不需要再 mount。
         InitializeSdCard();
         // InitializeNoLCD();
         /* 顺序：LCD 上电稳定后再初始化 GT911，最后构造 LVGL 显示（触摸已就绪） */
@@ -746,7 +736,7 @@ public:
                     // 4G    -> Nt26Board::GetRegistrationState().stat
                     //          (AT+CEREG 上报的注册状态：1=本网、5=漫游为已注册)
 
-                    // GetCurrentBoard() 在 ML307 模式下返回的就是 Nt26Board
+                    // GetCurrentBoard() 在蜂窝模式下返回的就是 Nt26Board
                     // （metalio-claw-4 的 DualNetworkBoard 这一路只接 NT26），
                     // 所以 static_cast 是安全的；WiFi 模式根本不会走到这个分支。
                     {

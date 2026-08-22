@@ -1,0 +1,1101 @@
+#include "lua_agent_session.h"
+
+#include "i18n.h"
+
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <inttypes.h>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <new>
+#include <string>
+#include <vector>
+
+#include "cJSON.h"
+#include "esp_app_desc.h"
+#include "esp_chip_info.h"
+#include "esp_log.h"
+#include "esp_random.h"
+#include "esp_system.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
+
+#include "api_endpoints.h"
+#include "application.h"
+#include "audio_service.h"
+#include "board.h"
+#include "display.h"
+#include "lua_runtime.h"
+#include "protocol.h"
+#include "settings.h"
+#include "system_info.h"
+#include <web_socket.h>
+
+namespace {
+
+constexpr const char* TAG = "LuaAgent";
+constexpr int kProtocolVersion = 1;
+constexpr uint32_t kDefaultTimeoutMs = 30000;
+constexpr uint32_t kMaxTimeoutMs = 600000;
+constexpr size_t kWsReceiveBytes = 80 * 1024;
+constexpr size_t kMaxArgsJson = 16 * 1024;
+constexpr int kQueueLength = 4;
+constexpr uint32_t kPingIntervalMs = 20000;
+constexpr uint32_t kRecvTimeoutMs = 60000;
+constexpr uint32_t kBackoffMinMs = 1000;
+constexpr uint32_t kBackoffMaxMs = 15000;
+constexpr int kWorkerStack = 32 * 1024;
+constexpr int kIdMax = 64;
+constexpr int kEntryMax = 32;
+constexpr size_t kMaxSpeakBytes = 512 * 1024;
+constexpr size_t kMaxSpeakFrames = 1200;
+constexpr size_t kMaxOpusPacketBytes = 1500;
+constexpr int kDefaultSpeakSampleRate = 16000;
+constexpr int kDefaultSpeakFrameDurationMs = 60;
+
+enum class ConnState {
+    Idle,
+    Connecting,
+    Waiting,
+    Running,
+    Reconnecting,
+    Error,
+};
+
+struct IncomingMsg {
+    char* text;
+};
+
+std::mutex s_ws_mutex;
+std::unique_ptr<WebSocket> s_ws;
+std::mutex s_inbound_mutex;
+
+std::atomic<uint32_t> s_session{0};
+std::atomic<bool> s_stop{false};
+std::atomic<bool> s_worker_running{false};
+std::atomic<bool> s_connected{false};
+std::atomic<bool> s_job_active{false};
+std::atomic<bool> s_speak_active{false};
+
+std::mutex s_speak_mutex;
+bool s_speak_collecting = false;
+bool s_speak_wait = true;
+bool s_speak_saw_busy = false;
+int s_speak_sample_rate = kDefaultSpeakSampleRate;
+int s_speak_frame_duration = kDefaultSpeakFrameDurationMs;
+size_t s_speak_expected = 0;
+size_t s_speak_feed_index = 0;
+size_t s_speak_payload_bytes = 0;
+uint32_t s_speak_handle = 0;
+uint32_t s_speak_duration_ms = 0;
+std::vector<std::vector<uint8_t>> s_speak_frames;
+
+QueueHandle_t s_msg_queue;
+lua_runtime_job_id_t s_job_id;
+char s_current_req_id[kIdMax];
+int64_t s_job_started_us;
+std::string s_url;
+std::string s_token;
+
+bool SessionAlive(uint32_t session) {
+    return session == s_session.load(std::memory_order_acquire) &&
+           !s_stop.load(std::memory_order_acquire);
+}
+
+void PostChat(const char* text) {
+    if (!text || text[0] == '\0')
+        return;
+    Display* display = Board::GetInstance().GetDisplay();
+    if (display)
+        display->SetChatMessage("assistant", text);
+}
+
+void SetSnap(ConnState state, const char* status_msgid, const std::string& detail = std::string()) {
+    ESP_LOGI(TAG, "state=%d %s %s", static_cast<int>(state), status_msgid ? status_msgid : "",
+             detail.c_str());
+}
+
+void SetJobFields(const char* job_id, const char* result, const char* output) {
+    (void)job_id;
+    (void)result;
+    (void)output;
+}
+
+std::string Truncate(const std::string& text, size_t max_chars) {
+    if (text.size() <= max_chars)
+        return text;
+    return text.substr(0, max_chars) + "...";
+}
+
+std::string GetAgentUrl() {
+    Settings settings("lua_agent", false);
+    std::string url = settings.GetString("url");
+    if (!url.empty())
+        return url;
+#ifdef CONFIG_LUA_AGENT_WS_URL
+    if (CONFIG_LUA_AGENT_WS_URL[0] != '\0')
+        return CONFIG_LUA_AGENT_WS_URL;
+#endif
+    return api::LuaAgentWsUrl();
+}
+
+std::string GetAgentToken() {
+    Settings settings("lua_agent", false);
+    return settings.GetString("token");
+}
+
+void CloseWebSocket() {
+    std::lock_guard<std::mutex> lock(s_ws_mutex);
+    if (s_ws) {
+        s_ws->Close();
+        s_ws.reset();
+    }
+    s_connected.store(false, std::memory_order_release);
+}
+
+bool SendJson(cJSON* root) {
+    if (!root)
+        return false;
+    char* printed = cJSON_PrintUnformatted(root);
+    if (!printed)
+        return false;
+    bool ok = false;
+    {
+        std::lock_guard<std::mutex> lock(s_ws_mutex);
+        if (s_ws && s_ws->IsConnected())
+            ok = s_ws->Send(printed);
+    }
+    cJSON_free(printed);
+    return ok;
+}
+
+void SendError(const char* id, const char* code, const char* message) {
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "v", kProtocolVersion);
+    cJSON_AddStringToObject(root, "type", "error");
+    if (id && id[0])
+        cJSON_AddStringToObject(root, "id", id);
+    cJSON* error = cJSON_CreateObject();
+    cJSON_AddStringToObject(error, "code", code);
+    cJSON_AddStringToObject(error, "message", message ? message : "");
+    cJSON_AddItemToObject(root, "error", error);
+    SendJson(root);
+    cJSON_Delete(root);
+}
+
+cJSON* BuildHelloDevice() {
+    cJSON* device = cJSON_CreateObject();
+    auto& board = Board::GetInstance();
+    const auto* app_desc = esp_app_get_description();
+    cJSON_AddStringToObject(device, "uuid", board.GetUuid().c_str());
+    cJSON_AddStringToObject(device, "mac", SystemInfo::GetMacAddress().c_str());
+    cJSON_AddStringToObject(device, "board", BOARD_NAME);
+    cJSON_AddStringToObject(device, "chip", SystemInfo::GetChipModelName().c_str());
+    cJSON_AddStringToObject(device, "firmware", app_desc->version);
+    cJSON_AddStringToObject(device, "idf", app_desc->idf_ver);
+    cJSON_AddStringToObject(device, "language", I18n::GetLocaleCode());
+    cJSON_AddNumberToObject(device, "flash_size", (double)SystemInfo::GetFlashSize());
+    cJSON_AddNumberToObject(device, "heap_free", (double)SystemInfo::GetFreeHeapSize());
+
+    esp_chip_info_t chip_info;
+    esp_chip_info(&chip_info);
+    cJSON_AddNumberToObject(device, "cores", chip_info.cores);
+
+    int battery = 0;
+    bool charging = false;
+    bool discharging = false;
+    if (board.GetBatteryLevel(battery, charging, discharging)) {
+        cJSON* bat = cJSON_CreateObject();
+        cJSON_AddNumberToObject(bat, "level", battery);
+        cJSON_AddBoolToObject(bat, "charging", charging);
+        cJSON_AddItemToObject(device, "battery", bat);
+    }
+
+    cJSON* lua = cJSON_CreateObject();
+    cJSON_AddNumberToObject(lua, "max_code_bytes", 64 * 1024);
+    cJSON_AddNumberToObject(lua, "max_output_bytes", 4 * 1024);
+    cJSON_AddNumberToObject(lua, "max_result_bytes", (double)LUA_RUNTIME_RESULT_SIZE);
+    cJSON* caps = cJSON_CreateArray();
+    cJSON_AddItemToArray(caps, cJSON_CreateString("lua"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("ui"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("audio"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("http"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("alert"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("tts"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("device"));
+    if (board.GetCamera() != nullptr)
+        cJSON_AddItemToArray(caps, cJSON_CreateString("camera"));
+    cJSON_AddItemToObject(lua, "capabilities", caps);
+    cJSON_AddItemToObject(device, "lua", lua);
+    return device;
+}
+
+std::string BootId() {
+    static std::string id;
+    if (!id.empty())
+        return id;
+    uint8_t bytes[16];
+    esp_fill_random(bytes, sizeof(bytes));
+    bytes[6] = static_cast<uint8_t>((bytes[6] & 0x0f) | 0x40);
+    bytes[8] = static_cast<uint8_t>((bytes[8] & 0x3f) | 0x80);
+    char text[37];
+    snprintf(text, sizeof(text),
+             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", bytes[0],
+             bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
+             bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
+    id = text;
+    return id;
+}
+
+bool SendHello() {
+    char id[32];
+    snprintf(id, sizeof(id), "h-%08lx", (unsigned long)esp_random());
+    auto& board = Board::GetInstance();
+    const auto* app_desc = esp_app_get_description();
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "v", kProtocolVersion);
+    cJSON_AddStringToObject(root, "type", "hello");
+    cJSON_AddStringToObject(root, "id", id);
+    cJSON_AddStringToObject(root, "protocol", "lua-agent");
+    cJSON_AddNumberToObject(root, "ts_ms", (double)(esp_timer_get_time() / 1000));
+    cJSON_AddStringToObject(root, "ts", "1970-01-01T00:00:00.000Z");
+    cJSON* device = BuildHelloDevice();
+    cJSON_AddItemToObject(root, "device", device);
+
+    cJSON* data = cJSON_CreateObject();
+    cJSON_AddStringToObject(data, "protocol", "lua-agent");
+    cJSON_AddStringToObject(data, "device_id", board.GetUuid().c_str());
+    cJSON_AddStringToObject(data, "boot_id", BootId().c_str());
+    cJSON_AddStringToObject(data, "firmware_version", app_desc->version);
+    cJSON_AddStringToObject(data, "lua_runtime", "claw4");
+    cJSON* caps = cJSON_CreateArray();
+    cJSON_AddItemToArray(caps, cJSON_CreateString("lua"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("ui"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("audio"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("http"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("alert"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("tts"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("device"));
+    if (board.GetCamera() != nullptr)
+        cJSON_AddItemToArray(caps, cJSON_CreateString("camera"));
+    cJSON_AddItemToObject(data, "capabilities", caps);
+    cJSON* limits = cJSON_CreateObject();
+    cJSON_AddNumberToObject(limits, "max_script_bytes", 64 * 1024);
+    cJSON_AddNumberToObject(limits, "max_params_bytes", 16 * 1024);
+    cJSON_AddNumberToObject(limits, "max_chunk_bytes", 64 * 1024);
+    cJSON_AddNumberToObject(limits, "max_message_bytes", (double)kWsReceiveBytes);
+    cJSON_AddNumberToObject(limits, "max_log_bytes", 1024);
+    cJSON_AddItemToObject(data, "limits", limits);
+    cJSON* runtime = cJSON_CreateObject();
+    cJSON_AddStringToObject(runtime, "execution_model", "main_once");
+    cJSON_AddStringToObject(runtime, "api_version", "claw4.v1");
+    cJSON_AddStringToObject(runtime, "transfer_storage", "ram");
+    cJSON_AddNumberToObject(runtime, "max_run_timeout_ms", 60000);
+    cJSON_AddItemToObject(data, "runtime", runtime);
+    cJSON_AddItemToObject(root, "data", data);
+
+    std::string system_json = board.GetSystemInfoJson();
+    cJSON* system = cJSON_Parse(system_json.c_str());
+    if (system)
+        cJSON_AddItemToObject(root, "system", system);
+    bool ok = SendJson(root);
+    cJSON_Delete(root);
+    return ok;
+}
+
+void SendPong(const char* id, cJSON* ts) {
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "v", kProtocolVersion);
+    cJSON_AddStringToObject(root, "type", "pong");
+    if (id && id[0])
+        cJSON_AddStringToObject(root, "id", id);
+    if (cJSON_IsNumber(ts))
+        cJSON_AddNumberToObject(root, "ts_ms", ts->valuedouble);
+    else
+        cJSON_AddNumberToObject(root, "ts_ms", (double)(esp_timer_get_time() / 1000));
+    SendJson(root);
+    cJSON_Delete(root);
+}
+
+void SendPing() {
+    char id[32];
+    snprintf(id, sizeof(id), "p-%08lx", (unsigned long)esp_random());
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "v", kProtocolVersion);
+    cJSON_AddStringToObject(root, "type", "ping");
+    cJSON_AddStringToObject(root, "id", id);
+    cJSON_AddNumberToObject(root, "ts_ms", (double)(esp_timer_get_time() / 1000));
+    SendJson(root);
+    cJSON_Delete(root);
+    std::lock_guard<std::mutex> lock(s_ws_mutex);
+    if (s_ws && s_ws->IsConnected())
+        s_ws->Ping();
+}
+
+uint32_t ParseCapabilities(const cJSON* caps) {
+    if (!cJSON_IsArray(caps))
+        return LUA_RUNTIME_CAP_HTTP | LUA_RUNTIME_CAP_LOG_OUTPUT;
+    uint32_t value = LUA_RUNTIME_CAP_LOG_OUTPUT;
+    const cJSON* item = nullptr;
+    cJSON_ArrayForEach(item, caps) {
+        if (!cJSON_IsString(item) || !item->valuestring)
+            continue;
+        if (strcmp(item->valuestring, "http") == 0)
+            value |= LUA_RUNTIME_CAP_HTTP;
+        else if (strcmp(item->valuestring, "uart") == 0)
+            value |= LUA_RUNTIME_CAP_UART;
+        else if (strcmp(item->valuestring, "log") == 0)
+            value |= LUA_RUNTIME_CAP_LOG_OUTPUT;
+        else if (strcmp(item->valuestring, "camera") == 0)
+            value |= LUA_RUNTIME_CAP_CAMERA;
+    }
+    return value;
+}
+
+void SendJobResult(const char* id, lua_runtime_job_state_t state, const char* output,
+                   bool output_truncated, const char* value_json, bool value_truncated,
+                   uint32_t duration_ms) {
+    const char* status = "failed";
+    const char* code = "lua_error";
+    bool ok = false;
+    switch (state) {
+        case LUA_RUNTIME_JOB_DONE:
+            status = "done";
+            ok = true;
+            code = nullptr;
+            break;
+        case LUA_RUNTIME_JOB_TIMEOUT:
+            status = "timeout";
+            code = "timeout";
+            break;
+        case LUA_RUNTIME_JOB_STOPPED:
+            status = "cancelled";
+            code = "cancelled";
+            break;
+        default:
+            status = "failed";
+            if (output && strstr(output, "entry function not found"))
+                code = "no_entry";
+            else
+                code = "lua_error";
+            break;
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "v", kProtocolVersion);
+    cJSON_AddStringToObject(root, "type", "result");
+    cJSON_AddStringToObject(root, "id", id);
+    cJSON_AddBoolToObject(root, "ok", ok);
+    cJSON_AddStringToObject(root, "status", status);
+    if (!ok && code) {
+        cJSON* error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "code", code);
+        const char* message = output && output[0] ? output : code;
+        cJSON_AddStringToObject(error, "message", message);
+        cJSON_AddItemToObject(root, "error", error);
+    }
+    cJSON* value = nullptr;
+    if (value_json && value_json[0])
+        value = cJSON_Parse(value_json);
+    if (value)
+        cJSON_AddItemToObject(root, "value", value);
+    else
+        cJSON_AddNullToObject(root, "value");
+    cJSON_AddBoolToObject(root, "value_truncated", value_truncated);
+    cJSON_AddStringToObject(root, "output", output ? output : "");
+    cJSON_AddBoolToObject(root, "output_truncated", output_truncated);
+    cJSON_AddNumberToObject(root, "duration_ms", duration_ms);
+    SendJson(root);
+    cJSON_Delete(root);
+}
+
+void SendImmediateResult(const char* id, const char* status, const char* code,
+                         const char* message) {
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "v", kProtocolVersion);
+    cJSON_AddStringToObject(root, "type", "result");
+    cJSON_AddStringToObject(root, "id", id ? id : "");
+    cJSON_AddBoolToObject(root, "ok", false);
+    cJSON_AddStringToObject(root, "status", status);
+    cJSON* error = cJSON_CreateObject();
+    cJSON_AddStringToObject(error, "code", code);
+    cJSON_AddStringToObject(error, "message", message ? message : code);
+    cJSON_AddItemToObject(root, "error", error);
+    cJSON_AddNullToObject(root, "value");
+    cJSON_AddBoolToObject(root, "value_truncated", false);
+    cJSON_AddStringToObject(root, "output", "");
+    cJSON_AddBoolToObject(root, "output_truncated", false);
+    cJSON_AddNumberToObject(root, "duration_ms", 0);
+    SendJson(root);
+    cJSON_Delete(root);
+}
+
+void FinishJobIfDone() {
+    if (!s_job_active.load(std::memory_order_acquire))
+        return;
+    lua_runtime_job_info_t info = {};
+    std::unique_ptr<char[]> output(new (std::nothrow) char[LUA_RUNTIME_OUTPUT_SIZE]());
+    if (!output)
+        return;
+    if (lua_runtime_get_job(s_job_id, &info, output.get(), LUA_RUNTIME_OUTPUT_SIZE) != ESP_OK)
+        return;
+    if (info.state < LUA_RUNTIME_JOB_DONE)
+        return;
+
+    std::unique_ptr<char[]> result(new (std::nothrow) char[LUA_RUNTIME_RESULT_SIZE]());
+    if (!result)
+        return;
+    lua_runtime_get_job_result(s_job_id, result.get(), LUA_RUNTIME_RESULT_SIZE);
+    const uint32_t duration_ms =
+        (uint32_t)((esp_timer_get_time() - s_job_started_us) / 1000);
+    SendJobResult(s_current_req_id, info.state, output.get(), info.output_truncated, result.get(),
+                  info.result_truncated, duration_ms);
+    SetJobFields(s_current_req_id, result[0] ? result.get() : "null", output.get());
+    if (output[0]) {
+        PostChat(Truncate(output.get(), 400).c_str());
+    } else if (result[0] && strcmp(result.get(), "null") != 0) {
+        PostChat(Truncate(result.get(), 400).c_str());
+    } else if (info.state == LUA_RUNTIME_JOB_TIMEOUT) {
+        PostChat(I18n::T("脚本超时"));
+    } else if (info.state == LUA_RUNTIME_JOB_STOPPED) {
+        PostChat(I18n::T("脚本已取消"));
+    } else if (info.state != LUA_RUNTIME_JOB_DONE) {
+        PostChat(I18n::T("脚本运行失败"));
+    }
+    s_job_active.store(false, std::memory_order_release);
+    s_current_req_id[0] = '\0';
+    if (!s_stop.load(std::memory_order_acquire) &&
+        s_connected.load(std::memory_order_acquire)) {
+        SetSnap(ConnState::Waiting, "已连接，等待任务");
+    }
+}
+
+void ResetSpeakLocked() {
+    s_speak_collecting = false;
+    s_speak_wait = true;
+    s_speak_saw_busy = false;
+    s_speak_expected = 0;
+    s_speak_feed_index = 0;
+    s_speak_payload_bytes = 0;
+    s_speak_handle = 0;
+    s_speak_duration_ms = 0;
+    s_speak_sample_rate = kDefaultSpeakSampleRate;
+    s_speak_frame_duration = kDefaultSpeakFrameDurationMs;
+    s_speak_frames.clear();
+}
+
+void ResetSpeak() {
+    std::lock_guard<std::mutex> lock(s_speak_mutex);
+    ResetSpeakLocked();
+}
+
+void StopSpeakAudio() {
+    auto& audio = Application::GetInstance().GetAudioService();
+    audio.ResetDecoder();
+    audio.StopAllSoundEffects();
+}
+
+void CompleteSpeak(bool ok, const char* status, const char* value_json, uint32_t duration_ms,
+                   const char* code = nullptr, const char* message = nullptr) {
+    if (ok) {
+        SendJobResult(s_current_req_id, LUA_RUNTIME_JOB_DONE, "", false, value_json, false,
+                      duration_ms);
+    } else {
+        SendImmediateResult(s_current_req_id, status, code ? code : status,
+                            message ? message : status);
+    }
+    s_speak_active.store(false, std::memory_order_release);
+    s_current_req_id[0] = '\0';
+    ResetSpeak();
+    if (s_connected.load(std::memory_order_acquire))
+        SetSnap(ConnState::Waiting, "已连接，等待任务");
+}
+
+bool IsOpusSampleRate(int sample_rate) {
+    return sample_rate == 8000 || sample_rate == 12000 || sample_rate == 16000 ||
+           sample_rate == 24000 || sample_rate == 48000;
+}
+
+void HandleSpeak(cJSON* root) {
+    const cJSON* id_item = cJSON_GetObjectItem(root, "id");
+    const char* id = cJSON_IsString(id_item) ? id_item->valuestring : "";
+    if (!id[0]) {
+        SendError("", "invalid", "speak requires id");
+        return;
+    }
+    if (s_job_active.load(std::memory_order_acquire) ||
+        s_speak_active.load(std::memory_order_acquire)) {
+        SendImmediateResult(id, "rejected", "busy", "a job is already running");
+        return;
+    }
+    const cJSON* format_item = cJSON_GetObjectItem(root, "format");
+    const char* format = cJSON_IsString(format_item) ? format_item->valuestring : "opus";
+    if (strcmp(format, "opus") != 0) {
+        ResetSpeak();
+        SendImmediateResult(id, "rejected", "invalid", "speak only supports opus");
+        return;
+    }
+    const cJSON* count_item = cJSON_GetObjectItem(root, "frame_count");
+    if (!cJSON_IsNumber(count_item) || count_item->valuedouble <= 0) {
+        ResetSpeak();
+        SendImmediateResult(id, "rejected", "invalid", "speak requires frame_count");
+        return;
+    }
+    const size_t expected = static_cast<size_t>(count_item->valuedouble);
+    if (expected > kMaxSpeakFrames) {
+        ResetSpeak();
+        SendImmediateResult(id, "rejected", "too_large", "too many opus frames");
+        return;
+    }
+    int sample_rate = kDefaultSpeakSampleRate;
+    const cJSON* sample_rate_item = cJSON_GetObjectItem(root, "sample_rate");
+    if (cJSON_IsNumber(sample_rate_item) && sample_rate_item->valuedouble > 0)
+        sample_rate = static_cast<int>(sample_rate_item->valuedouble);
+    if (!IsOpusSampleRate(sample_rate)) {
+        ResetSpeak();
+        SendImmediateResult(id, "rejected", "invalid", "unsupported opus sample_rate");
+        return;
+    }
+    int frame_duration = kDefaultSpeakFrameDurationMs;
+    const cJSON* frame_item = cJSON_GetObjectItem(root, "frame_duration");
+    if (cJSON_IsNumber(frame_item) && frame_item->valuedouble > 0)
+        frame_duration = static_cast<int>(frame_item->valuedouble);
+    if (frame_duration != 20 && frame_duration != 40 && frame_duration != 60) {
+        ResetSpeak();
+        SendImmediateResult(id, "rejected", "invalid", "unsupported opus frame_duration");
+        return;
+    }
+    int volume = 80;
+    const cJSON* volume_item = cJSON_GetObjectItem(root, "volume");
+    if (cJSON_IsNumber(volume_item))
+        volume = static_cast<int>(volume_item->valuedouble);
+    if (volume < 0)
+        volume = 0;
+    if (volume > 100)
+        volume = 100;
+    bool wait = true;
+    const cJSON* wait_item = cJSON_GetObjectItem(root, "wait");
+    if (cJSON_IsBool(wait_item))
+        wait = cJSON_IsTrue(wait_item);
+    uint32_t duration_ms = static_cast<uint32_t>(expected * frame_duration);
+    const cJSON* duration_item = cJSON_GetObjectItem(root, "duration_ms");
+    if (cJSON_IsNumber(duration_item) && duration_item->valuedouble > 0)
+        duration_ms = static_cast<uint32_t>(duration_item->valuedouble);
+
+    {
+        std::lock_guard<std::mutex> lock(s_speak_mutex);
+        s_speak_expected = expected;
+        s_speak_collecting = true;
+        s_speak_wait = wait;
+        s_speak_duration_ms = duration_ms;
+        s_speak_sample_rate = sample_rate;
+        s_speak_frame_duration = frame_duration;
+        s_speak_handle = 0;
+        s_speak_feed_index = 0;
+        s_speak_saw_busy = false;
+        if (s_speak_frames.size() > expected)
+            s_speak_frames.resize(expected);
+    }
+    strlcpy(s_current_req_id, id, sizeof(s_current_req_id));
+    s_job_started_us = esp_timer_get_time();
+    s_speak_active.store(true, std::memory_order_release);
+    SetJobFields(id, "", "");
+    SetSnap(ConnState::Running, "正在播报", id);
+    ESP_LOGI(TAG, "speak id=%s frames=%u rate=%d dur=%d volume=%d", id, (unsigned)expected,
+             sample_rate, frame_duration, volume);
+}
+
+void FinishSpeakIfReady() {
+    if (!s_speak_active.load(std::memory_order_acquire))
+        return;
+
+    auto& audio = Application::GetInstance().GetAudioService();
+    const uint32_t elapsed =
+        (uint32_t)((esp_timer_get_time() - s_job_started_us) / 1000);
+
+    bool wait = true;
+    uint32_t duration_ms = 0;
+    bool start_feed = false;
+    bool incomplete = false;
+    {
+        std::lock_guard<std::mutex> lock(s_speak_mutex);
+        wait = s_speak_wait;
+        duration_ms = s_speak_duration_ms;
+        if (s_speak_handle == 0 && s_speak_collecting && s_speak_expected > 0 &&
+            s_speak_frames.size() >= s_speak_expected) {
+            s_speak_collecting = false;
+            s_speak_handle = 1;
+            s_speak_feed_index = 0;
+            start_feed = true;
+        } else if (s_speak_handle == 0 && s_speak_collecting && s_speak_expected > 0 &&
+                   elapsed > 8000) {
+            incomplete = true;
+        }
+    }
+
+    if (incomplete) {
+        StopSpeakAudio();
+        CompleteSpeak(false, "failed", "null", elapsed, "incomplete", "opus frames incomplete");
+        return;
+    }
+
+    if (start_feed)
+        audio.ResetDecoder();
+
+    while (s_speak_handle != 0) {
+        std::vector<uint8_t> frame;
+        int sample_rate = kDefaultSpeakSampleRate;
+        int frame_duration = kDefaultSpeakFrameDurationMs;
+        {
+            std::lock_guard<std::mutex> lock(s_speak_mutex);
+            if (s_speak_feed_index >= s_speak_expected ||
+                s_speak_feed_index >= s_speak_frames.size())
+                break;
+            frame = s_speak_frames[s_speak_feed_index];
+            sample_rate = s_speak_sample_rate;
+            frame_duration = s_speak_frame_duration;
+        }
+        auto packet = std::make_unique<AudioStreamPacket>();
+        packet->sample_rate = sample_rate;
+        packet->frame_duration = frame_duration;
+        packet->payload = std::move(frame);
+        if (!audio.PushPacketToDecodeQueue(std::move(packet), false))
+            break;
+        {
+            std::lock_guard<std::mutex> lock(s_speak_mutex);
+            s_speak_feed_index++;
+            if (s_speak_feed_index >= s_speak_expected)
+                s_speak_frames.clear();
+        }
+    }
+
+    bool all_fed = false;
+    {
+        std::lock_guard<std::mutex> lock(s_speak_mutex);
+        wait = s_speak_wait;
+        duration_ms = s_speak_duration_ms;
+        all_fed = s_speak_handle != 0 && s_speak_feed_index >= s_speak_expected;
+    }
+    if (!all_fed)
+        return;
+
+    if (!wait) {
+        char value[96];
+        snprintf(value, sizeof(value), "{\"success\":true,\"durationMs\":%" PRIu32 "}",
+                 duration_ms);
+        CompleteSpeak(true, "done", value, duration_ms);
+        return;
+    }
+
+    const uint32_t limit =
+        (duration_ms ? duration_ms : s_speak_expected * s_speak_frame_duration) + 1500;
+    const bool idle = audio.IsIdle();
+    if (!idle) {
+        s_speak_saw_busy = true;
+        if (elapsed < limit)
+            return;
+    } else if (!s_speak_saw_busy && elapsed < 250) {
+        return;
+    }
+
+    char value[96];
+    snprintf(value, sizeof(value), "{\"success\":true,\"durationMs\":%" PRIu32 "}",
+             duration_ms ? duration_ms : elapsed);
+    CompleteSpeak(true, "done", value, elapsed);
+}
+
+void HandleRun(cJSON* root) {
+    const cJSON* id_item = cJSON_GetObjectItem(root, "id");
+    const char* id = cJSON_IsString(id_item) ? id_item->valuestring : "";
+    if (!id[0]) {
+        SendError("", "invalid", "run requires id");
+        return;
+    }
+    if (s_job_active.load(std::memory_order_acquire) ||
+        s_speak_active.load(std::memory_order_acquire)) {
+        SendImmediateResult(id, "rejected", "busy", "a job is already running");
+        return;
+    }
+    const cJSON* script_item = cJSON_GetObjectItem(root, "script");
+    if (!cJSON_IsString(script_item) || !script_item->valuestring ||
+        script_item->valuestring[0] == '\0') {
+        SendImmediateResult(id, "rejected", "invalid", "run requires script");
+        return;
+    }
+    const size_t script_len = strlen(script_item->valuestring);
+    if (script_len > 64 * 1024) {
+        SendImmediateResult(id, "rejected", "too_large", "script exceeds 64KiB");
+        return;
+    }
+
+    const cJSON* entry_item = cJSON_GetObjectItem(root, "entry");
+    const char* entry = "main";
+    if (cJSON_IsString(entry_item) && entry_item->valuestring && entry_item->valuestring[0])
+        entry = entry_item->valuestring;
+    if (strlen(entry) >= kEntryMax) {
+        SendImmediateResult(id, "rejected", "invalid", "entry name too long");
+        return;
+    }
+
+    uint32_t timeout_ms = kDefaultTimeoutMs;
+    const cJSON* timeout_item = cJSON_GetObjectItem(root, "timeout_ms");
+    if (cJSON_IsNumber(timeout_item)) {
+        if (timeout_item->valuedouble < 0) {
+            SendImmediateResult(id, "rejected", "invalid", "timeout_ms must be >= 0");
+            return;
+        }
+        timeout_ms = (uint32_t)timeout_item->valuedouble;
+        if (timeout_ms > kMaxTimeoutMs)
+            timeout_ms = kMaxTimeoutMs;
+    }
+
+    char* args_json = nullptr;
+    const cJSON* args_item = cJSON_GetObjectItem(root, "args");
+    if (args_item) {
+        args_json = cJSON_PrintUnformatted(args_item);
+        if (!args_json || strlen(args_json) > kMaxArgsJson) {
+            cJSON_free(args_json);
+            SendImmediateResult(id, "rejected", "too_large", "args exceeds 16KiB");
+            return;
+        }
+    }
+
+    lua_runtime_job_config_t config = {
+        .name = "lua_agent",
+        .code = script_item->valuestring,
+        .path = nullptr,
+        .args_json = args_json ? args_json : "{}",
+        .timeout_ms = timeout_ms,
+        .stack_size = 16 * 1024,
+        .priority = 4,
+        .capabilities = ParseCapabilities(cJSON_GetObjectItem(root, "capabilities")),
+        .entry = entry,
+    };
+    lua_runtime_job_id_t job_id = 0;
+    const esp_err_t err = lua_runtime_start(&config, &job_id);
+    cJSON_free(args_json);
+    if (err != ESP_OK) {
+        const char* code = "busy";
+        if (err == ESP_ERR_INVALID_SIZE)
+            code = "too_large";
+        else if (err == ESP_ERR_INVALID_ARG)
+            code = "invalid";
+        SendImmediateResult(id, "rejected", code, esp_err_to_name(err));
+        return;
+    }
+    strlcpy(s_current_req_id, id, sizeof(s_current_req_id));
+    s_job_id = job_id;
+    s_job_started_us = esp_timer_get_time();
+    s_job_active.store(true, std::memory_order_release);
+    SetJobFields(id, "", "");
+    SetSnap(ConnState::Running, "正在运行脚本", id);
+    PostChat(I18n::T("正在运行脚本"));
+    ESP_LOGI(TAG, "run id=%s bytes=%u timeout_ms=%" PRIu32, id, (unsigned)script_len, timeout_ms);
+}
+
+void HandleCancel(cJSON* root) {
+    const cJSON* id_item = cJSON_GetObjectItem(root, "id");
+    const char* id = cJSON_IsString(id_item) ? id_item->valuestring : "";
+    if (!id[0]) {
+        SendError("", "invalid", "cancel requires id");
+        return;
+    }
+    if (s_speak_active.load(std::memory_order_acquire) &&
+        strcmp(s_current_req_id, id) == 0) {
+        StopSpeakAudio();
+        SendJobResult(id, LUA_RUNTIME_JOB_STOPPED, "", false, "null", false, 0);
+        s_speak_active.store(false, std::memory_order_release);
+        s_current_req_id[0] = '\0';
+        ResetSpeak();
+        if (s_connected.load(std::memory_order_acquire))
+            SetSnap(ConnState::Waiting, "已连接，等待任务");
+        return;
+    }
+    if (!s_job_active.load(std::memory_order_acquire) ||
+        strcmp(s_current_req_id, id) != 0) {
+        SendError(id, "not_found", "no matching running job");
+        return;
+    }
+    lua_runtime_stop(s_job_id);
+}
+
+void HandleMessage(char* text) {
+    cJSON* root = cJSON_Parse(text);
+    if (!root) {
+        SendError("", "invalid", "JSON parse failed");
+        return;
+    }
+    const cJSON* type_item = cJSON_GetObjectItem(root, "type");
+    const char* type = cJSON_IsString(type_item) ? type_item->valuestring : "";
+    const cJSON* id_item = cJSON_GetObjectItem(root, "id");
+    const char* id = cJSON_IsString(id_item) ? id_item->valuestring : "";
+
+    if (strcmp(type, "ping") == 0) {
+        SendPong(id, cJSON_GetObjectItem(root, "ts_ms"));
+    } else if (strcmp(type, "pong") == 0 || strcmp(type, "hello_ok") == 0 ||
+               strcmp(type, "hello.welcome") == 0 || strcmp(type, "error") == 0) {
+        ESP_LOGI(TAG, "recv type=%s id=%s", type, id);
+    } else if (strcmp(type, "run") == 0) {
+        HandleRun(root);
+    } else if (strcmp(type, "speak") == 0) {
+        HandleSpeak(root);
+    } else if (strcmp(type, "cancel") == 0) {
+        HandleCancel(root);
+    } else {
+        SendError(id, "invalid", "unknown type");
+    }
+    cJSON_Delete(root);
+}
+
+void DrainQueue() {
+    IncomingMsg msg;
+    while (xQueueReceive(s_msg_queue, &msg, 0) == pdTRUE) {
+        if (msg.text) {
+            HandleMessage(msg.text);
+            free(msg.text);
+        }
+    }
+}
+
+bool ConnectWebSocket(uint32_t session) {
+    auto network = Board::GetInstance().GetNetwork();
+    if (!network)
+        return false;
+    auto ws = network->CreateWebSocket(1);
+    if (!ws)
+        return false;
+    ws->SetReceiveBufferSize(kWsReceiveBytes);
+    ws->SetHeader("Protocol-Version", "1");
+    ws->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
+    ws->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
+    if (!s_token.empty()) {
+        std::string auth = s_token;
+        if (auth.find(' ') == std::string::npos)
+            auth = "Bearer " + auth;
+        ws->SetHeader("Authorization", auth.c_str());
+    }
+
+    ws->OnData([session](const char* data, size_t len, bool binary) {
+        if (binary) {
+            if (!data || len == 0 || len > kMaxOpusPacketBytes)
+                return;
+            std::lock_guard<std::mutex> lock(s_speak_mutex);
+            if (!s_speak_collecting)
+                return;
+            if (s_speak_frames.size() >= kMaxSpeakFrames)
+                return;
+            if (s_speak_payload_bytes + len > kMaxSpeakBytes)
+                return;
+            s_speak_payload_bytes += len;
+            s_speak_frames.emplace_back(reinterpret_cast<const uint8_t*>(data),
+                                        reinterpret_cast<const uint8_t*>(data) + len);
+            return;
+        }
+        static const char kSpeakType[] = "\"type\":\"speak\"";
+        bool looks_speak = false;
+        if (data && len >= sizeof(kSpeakType) - 1) {
+            for (size_t i = 0; i + sizeof(kSpeakType) - 1 <= len; ++i) {
+                if (memcmp(data + i, kSpeakType, sizeof(kSpeakType) - 1) == 0) {
+                    looks_speak = true;
+                    break;
+                }
+            }
+        }
+        if (looks_speak && !s_speak_active.load(std::memory_order_acquire) &&
+            !s_job_active.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lock(s_speak_mutex);
+            s_speak_collecting = true;
+            s_speak_frames.clear();
+            s_speak_payload_bytes = 0;
+        }
+        IncomingMsg msg = {};
+        msg.text = static_cast<char*>(malloc(len + 1));
+        if (!msg.text)
+            return;
+        memcpy(msg.text, data, len);
+        msg.text[len] = '\0';
+        std::lock_guard<std::mutex> lock(s_inbound_mutex);
+        if (!SessionAlive(session) || !s_msg_queue ||
+            xQueueSend(s_msg_queue, &msg, 0) != pdTRUE) {
+            free(msg.text);
+        }
+    });
+    ws->OnDisconnected([session]() {
+        ESP_LOGI(TAG, "websocket disconnected");
+        if (SessionAlive(session))
+            s_connected.store(false, std::memory_order_release);
+    });
+    ws->OnError([session](int err) {
+        ESP_LOGE(TAG, "websocket error=%d", err);
+        if (SessionAlive(session))
+            s_connected.store(false, std::memory_order_release);
+    });
+
+    ESP_LOGI(TAG, "connecting %s", s_url.c_str());
+    if (!ws->Connect(s_url.c_str())) {
+        ESP_LOGE(TAG, "connect failed err=%d", ws->GetLastError());
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_ws_mutex);
+        s_ws = std::move(ws);
+    }
+    s_connected.store(true, std::memory_order_release);
+    if (!SendHello()) {
+        CloseWebSocket();
+        return false;
+    }
+    return true;
+}
+
+void InterruptibleDelay(uint32_t ms) {
+    while (ms > 0 && !s_stop.load(std::memory_order_acquire)) {
+        const uint32_t slice = ms > 50 ? 50 : ms;
+        vTaskDelay(pdMS_TO_TICKS(slice));
+        ms -= slice;
+    }
+}
+
+void AgentTask(void* arg) {
+    const uint32_t session = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(arg));
+    s_worker_running.store(true, std::memory_order_release);
+    uint32_t backoff_ms = kBackoffMinMs;
+    int64_t last_rx_us = esp_timer_get_time();
+    int64_t last_ping_us = 0;
+
+    while (!s_stop.load(std::memory_order_acquire) && SessionAlive(session)) {
+        if (!s_connected.load(std::memory_order_acquire)) {
+            if (s_job_active.load(std::memory_order_acquire)) {
+                lua_runtime_stop(s_job_id);
+                FinishJobIfDone();
+            }
+            if (s_speak_active.load(std::memory_order_acquire)) {
+                StopSpeakAudio();
+                s_speak_active.store(false, std::memory_order_release);
+                s_current_req_id[0] = '\0';
+                ResetSpeak();
+            }
+            CloseWebSocket();
+            SetSnap(ConnState::Connecting, "正在连接服务器", s_url);
+            if (ConnectWebSocket(session)) {
+                SetSnap(ConnState::Waiting, "已连接，等待任务", s_url);
+                backoff_ms = kBackoffMinMs;
+                last_rx_us = esp_timer_get_time();
+                last_ping_us = last_rx_us;
+            } else {
+                SetSnap(ConnState::Reconnecting, "连接断开，正在重连", s_url);
+                InterruptibleDelay(backoff_ms);
+                backoff_ms = backoff_ms * 2;
+                if (backoff_ms > kBackoffMaxMs)
+                    backoff_ms = kBackoffMaxMs;
+            }
+            continue;
+        }
+
+        IncomingMsg msg = {};
+        if (xQueueReceive(s_msg_queue, &msg, pdMS_TO_TICKS(50)) == pdTRUE) {
+            last_rx_us = esp_timer_get_time();
+            if (msg.text) {
+                HandleMessage(msg.text);
+                free(msg.text);
+            }
+        }
+        DrainQueue();
+        FinishJobIfDone();
+        FinishSpeakIfReady();
+
+        const int64_t now = esp_timer_get_time();
+        if ((now - last_ping_us) / 1000 >= kPingIntervalMs) {
+            SendPing();
+            last_ping_us = now;
+        }
+        if ((now - last_rx_us) / 1000 >= kRecvTimeoutMs) {
+            ESP_LOGW(TAG, "recv timeout, reconnecting");
+            s_connected.store(false, std::memory_order_release);
+        }
+    }
+
+    if (s_job_active.load(std::memory_order_acquire))
+        lua_runtime_stop(s_job_id);
+    for (int i = 0; i < 80 && (s_job_active.load(std::memory_order_acquire) ||
+                               s_speak_active.load(std::memory_order_acquire));
+         ++i) {
+        FinishJobIfDone();
+        FinishSpeakIfReady();
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    DrainQueue();
+    CloseWebSocket();
+    s_worker_running.store(false, std::memory_order_release);
+    vTaskDelete(nullptr);
+}
+
+void StopWorker() {
+    s_stop.store(true, std::memory_order_release);
+    s_session.fetch_add(1, std::memory_order_acq_rel);
+    if (s_job_active.load(std::memory_order_acquire))
+        lua_runtime_stop(s_job_id);
+    CloseWebSocket();
+    for (int i = 0; i < 250 && s_worker_running.load(std::memory_order_acquire); ++i)
+        vTaskDelay(pdMS_TO_TICKS(10));
+    {
+        std::lock_guard<std::mutex> lock(s_inbound_mutex);
+        if (s_msg_queue) {
+            IncomingMsg msg;
+            while (xQueueReceive(s_msg_queue, &msg, 0) == pdTRUE)
+                free(msg.text);
+            vQueueDelete(s_msg_queue);
+            s_msg_queue = nullptr;
+        }
+    }
+}
+
+
+bool StartWorker() {
+    s_stop.store(false, std::memory_order_release);
+    s_job_active.store(false, std::memory_order_release);
+    s_connected.store(false, std::memory_order_release);
+    s_current_req_id[0] = '\0';
+    s_url = GetAgentUrl();
+    s_token = GetAgentToken();
+    SetSnap(ConnState::Connecting, "正在连接服务器", s_url);
+    s_msg_queue = xQueueCreate(kQueueLength, sizeof(IncomingMsg));
+    if (!s_msg_queue)
+        return false;
+    const uint32_t session = s_session.fetch_add(1, std::memory_order_acq_rel) + 1;
+    s_session.store(session, std::memory_order_release);
+    if (xTaskCreate(AgentTask, "lua_agent", kWorkerStack,
+                    reinterpret_cast<void*>(static_cast<uintptr_t>(session)), 5, nullptr) !=
+        pdPASS) {
+        vQueueDelete(s_msg_queue);
+        s_msg_queue = nullptr;
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+void LuaAgentSession::Start() {
+    if (s_worker_running.load(std::memory_order_acquire)) {
+        ESP_LOGW(TAG, "Lua agent session is already active");
+        return;
+    }
+    if (!StartWorker()) {
+        ESP_LOGE(TAG, "failed to start lua agent worker");
+        PostChat(I18n::T("连接失败"));
+    }
+}
+
+void LuaAgentSession::Stop() {
+    StopWorker();
+}
+
+bool LuaAgentSession::IsRunning() {
+    return s_worker_running.load(std::memory_order_acquire);
+}

@@ -14,7 +14,7 @@
 //   I18n::Tf(buf, sizeof(buf), I18n::Str::BATTERY_PCT, level);
 //
 // Locale persistence: NVS namespace "ui", key "locale" (e.g. "zh-CN" / "en-US").
-// After SetLocale(), rebuild UI (HomeScreen::Create()) like theme switch.
+// After SetLocale(), rebuild UI like theme switch.
 // ---------------------------------------------------------------------------
 
 #include "i18n_strings_gen.h"

@@ -12,6 +12,8 @@
 #include "settings.h"
 #include "assets/lang_config.h"
 #include "jpg/image_to_jpeg.h"
+#include "agent_ui/agent_ui_runtime.h"
+#include "device_state.h"
 
 #define TAG "Display"
 
@@ -71,6 +73,26 @@ LvglDisplay::~LvglDisplay() {
 
 void LvglDisplay::SetStatus(const char* status) {
     DisplayLockGuard lock(this);
+    auto& ui = agent_ui::Runtime::Get();
+    ui.SetSystemStatus(status);
+    switch (Application::GetInstance().GetDeviceState()) {
+        case kDeviceStateConnecting:
+            ui.SetAgentState(agent_ui::AgentState::Connecting);
+            break;
+        case kDeviceStateListening:
+            ui.SetAgentState(agent_ui::AgentState::Listening);
+            break;
+        case kDeviceStateSpeaking:
+            ui.SetAgentState(agent_ui::AgentState::Answering);
+            break;
+        case kDeviceStateIdle:
+            ui.SetAgentState(agent_ui::AgentState::Idle);
+            break;
+        default:
+            // starting / activating / upgrading：不要重绘主页表情，避免在
+            // app_main 上持 LVGL 锁做 RefreshAi，把 OTA/看门狗拖死。
+            break;
+    }
     if (status_label_ == nullptr) {
         return;
     }

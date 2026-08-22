@@ -22,8 +22,8 @@
 #include "audio_service.h"
 #include "board.h"
 #include "config.h"
-#include "home_screen/home_screen.h"
 #include "http.h"
+#include "navigation.h"
 #include "screen_util.h"
 #include "system_info.h"
 #include <web_socket.h>
@@ -779,12 +779,7 @@ void stop_session_for_exit() {
 
 void go_home() {
     stop_session_for_exit();
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* home = HomeScreen::Create();
-    lv_screen_load(home);
-    if (old_scr != nullptr && old_scr != home) {
-        lv_obj_delete_async(old_scr);
-    }
+    agent_ui::Navigation::Get().Back();
 }
 
 void on_back_clicked(lv_event_t* /*e*/) { go_home(); }

@@ -15,10 +15,12 @@
 #include "lua_http_backend.h"
 #include "lua_runtime.h"
 #include "lua_self_test.h"
+#include "lua_agent_session.h"
 
 #include <cstring>
 #include <esp_log.h>
 #include <esp_heap_caps.h>
+#include <esp_ota_ops.h>
 #include <cJSON.h>
 #include <driver/gpio.h>
 #include <arpa/inet.h>
@@ -33,8 +35,9 @@
 
 #ifdef HAVE_LVGL
 #include "ota_screen.h"
-#include "home_screen.h"
-#include "chat_screen/chat_screen.h"
+#include "agent_ui/agent_ui_runtime.h"
+#include "agent_ui/core/performance_manager.h"
+#include "agent_ui/core/status_bar.h"
 #endif
 
 #define TAG "Application"
@@ -144,12 +147,39 @@ void Application::CheckAssetsVersion() {
     display->SetEmotion("microchip_ai");
 }
 
+namespace {
+
+bool HasCachedProtocolConfig() {
+    Settings mqtt("mqtt", false);
+    if (!mqtt.GetString("endpoint").empty()) {
+        return true;
+    }
+    Settings websocket("websocket", false);
+    return !websocket.GetString("url").empty();
+}
+
+bool HasOtaUpdatePartition() {
+    return esp_ota_get_next_update_partition(nullptr) != nullptr;
+}
+
+#ifdef HAVE_LVGL
+void SetBootTransferDemand(bool active) {
+    agent_ui::PerformanceManager::Get().SetDemand(
+        agent_ui::PerformanceDemand::Transfer, active);
+}
+#else
+void SetBootTransferDemand(bool /*active*/) {}
+#endif
+
+}  // namespace
+
 void Application::CheckNewVersion(Ota& ota) {
     const int MAX_RETRY = 10;
     int retry_count = 0;
     int retry_delay = 10; // 初始重试延迟为10秒
 
     auto& board = Board::GetInstance();
+    SetBootTransferDemand(true);
     while (true) {
         SetDeviceState(kDeviceStateActivating);
         auto display = board.GetDisplay();
@@ -158,8 +188,17 @@ void Application::CheckNewVersion(Ota& ota) {
         esp_err_t err = ota.CheckVersion();
         if (err != ESP_OK) {
             retry_count++;
+            // 已有协议缓存时不要把对话堵在 OTA 重试上：协议可以先起来。
+            if (HasCachedProtocolConfig()) {
+                ESP_LOGW(TAG,
+                         "OTA check failed (err=%d), using cached protocol config",
+                         static_cast<int>(err));
+                SetBootTransferDemand(false);
+                return;
+            }
             if (retry_count >= MAX_RETRY) {
                 ESP_LOGE(TAG, "Too many retries, exit version check");
+                SetBootTransferDemand(false);
                 return;
             }
 
@@ -183,7 +222,13 @@ void Application::CheckNewVersion(Ota& ota) {
         retry_delay = 10; // 重置重试延迟时间
 
         if (ota.HasNewVersion()) {
-            if (UpgradeFirmware(ota)) {
+            // 单分区（无 ota_1）不能写固件。跳过升级，继续用这次响应里的
+            // MQTT/WebSocket 配置，避免 OTA 界面/下载卡住后续启动。
+            if (!HasOtaUpdatePartition()) {
+                ESP_LOGW(TAG,
+                         "New firmware %s available, skipped (no OTA update partition)",
+                         ota.GetFirmwareVersion().c_str());
+            } else if (UpgradeFirmware(ota)) {
                 return; // This line will never be reached after reboot
             }
             // If upgrade failed, continue to normal operation (don't break, just fall through)
@@ -194,11 +239,8 @@ void Application::CheckNewVersion(Ota& ota) {
         if (!ota.HasActivationCode() && !ota.HasActivationChallenge()) {
             xEventGroupSetBits(event_group_, MAIN_EVENT_CHECK_NEW_VERSION_DONE);
             // Exit the loop if done checking new version
+            SetBootTransferDemand(false);
             break;
-        }
-
-        while (activation_suspended_) {
-            vTaskDelay(pdMS_TO_TICKS(500));
         }
 
         display->SetStatus(Lang::Strings::ACTIVATION);
@@ -207,19 +249,19 @@ void Application::CheckNewVersion(Ota& ota) {
             ShowActivationCode(ota.GetActivationCode(), ota.GetActivationMessage());
         }
 
-        // This will block the loop until the activation is done or timeout
+        // 最多试一轮激活。成功则再拉一次配置拿 MQTT；失败也继续开机，
+        // 验证码留在状态栏，避免 while(true) 把协议初始化卡死。
+        bool activated = false;
         for (int i = 0; i < 10; ++i) {
-            while (activation_suspended_) {
-                vTaskDelay(pdMS_TO_TICKS(500));
-            }
             ESP_LOGI(TAG, "Activating... %d/%d", i + 1, 10);
             esp_err_t err = ota.Activate();
             if (err == ESP_OK) {
                 pending_activation_code_.clear();
 #ifdef HAVE_LVGL
-                HomeScreen::RefreshStatusBar();
+                agent_ui::StatusBar::Get().RefreshAsync();
 #endif
                 xEventGroupSetBits(event_group_, MAIN_EVENT_CHECK_NEW_VERSION_DONE);
+                activated = true;
                 break;
             } else if (err == ESP_ERR_TIMEOUT) {
                 vTaskDelay(pdMS_TO_TICKS(3000));
@@ -230,31 +272,24 @@ void Application::CheckNewVersion(Ota& ota) {
                 break;
             }
         }
+        if (activated) {
+            continue;
+        }
+        ESP_LOGW(TAG, "Activation not finished, continuing boot");
+        xEventGroupSetBits(event_group_, MAIN_EVENT_CHECK_NEW_VERSION_DONE);
+        break;
     }
+    SetBootTransferDemand(false);
 }
 
 void Application::ShowActivationCode(const std::string& code, const std::string& message) {
-    if (activation_suspended_) {
-        return;
-    }
-
     // OTA 激活：仅缓存验证码供状态栏展示，不 Alert、不播报数字音。
     pending_activation_code_ = code;
 #ifdef HAVE_LVGL
-    HomeScreen::RefreshStatusBar();
+    agent_ui::StatusBar::Get().RefreshAsync();
 #endif
     ESP_LOGI(TAG, "Activation code ready for status bar (no TTS): %s (%s)",
              code.c_str(), message.c_str());
-}
-
-void Application::SetActivationSuspended(bool suspended) {
-    activation_suspended_ = suspended;
-    if (suspended) {
-        DismissAlert();
-        ESP_LOGI(TAG, "Activation suspended for stress test");
-    } else {
-        ESP_LOGI(TAG, "Activation resumed after stress test");
-    }
 }
 
 bool Application::IsDeviceActivated() const {
@@ -273,52 +308,13 @@ bool Application::IsDeviceActivated() const {
     return true;
 }
 
-void Application::StopSystemAudioForStressTest() {
-    if (protocol_ && protocol_->IsAudioChannelOpened()) {
-        protocol_->CloseAudioChannel();
-    }
-
-    if (device_state_ == kDeviceStateSpeaking) {
-        AbortSpeaking(kAbortReasonNone);
-    } else if (device_state_ == kDeviceStateListening && protocol_) {
-        protocol_->SendStopListening();
-    }
-
-    audio_service_.EnableAudioTesting(false);
-    audio_service_.EnableVoiceProcessing(false);
-    audio_service_.EnableWakeWordDetection(false);
-    audio_service_.ResetDecoder();
-
-    for (int i = 0; i < 20 && !audio_service_.IsIdle(); ++i) {
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-
-    if (device_state_ == kDeviceStateListening ||
-        device_state_ == kDeviceStateSpeaking ||
-        device_state_ == kDeviceStateConnecting) {
-        SetDeviceState(kDeviceStateIdle);
-    }
-
-    DismissAlert();
-    ESP_LOGI(TAG, "System audio stopped for stress test");
-}
-
-void Application::RestoreSystemAudioAfterStressTest() {
-    // 唤醒词只属于语音 UI 会话；压力测试结束后由聊天/数字人页重新 SetVoiceUiDesired(true)。
-    if (voice_ui_active_ && device_state_ == kDeviceStateIdle) {
-        audio_service_.EnableWakeWordDetection(true);
-    }
-    ESP_LOGI(TAG, "System audio restored after stress test (voice_ui=%d)",
-             voice_ui_active_ ? 1 : 0);
-}
-
 void Application::Alert(const char* status, const char* message, const char* emotion, const std::string_view& sound) {
     ESP_LOGW(TAG, "Alert [%s] %s: %s", emotion, status, message);
     auto display = Board::GetInstance().GetDisplay();
     display->SetStatus(status);
     display->SetEmotion(emotion);
     display->SetChatMessage("system", message);
-    if (!sound.empty() && !activation_suspended_) {
+    if (!sound.empty()) {
         audio_service_.PlaySound(sound);
     }
 }
@@ -332,56 +328,65 @@ void Application::DismissAlert() {
     }
 }
 
-void Application::ToggleChatState() {
-    if (device_state_ == kDeviceStateActivating) {
-        // 激活中点按：回到 Idle，但不自动开唤醒词（需在语音 UI 会话内）。
-        SetDeviceState(kDeviceStateIdle);
-        return;
-    } else if (device_state_ == kDeviceStateWifiConfiguring) {
+bool Application::ToggleChatState() {
+    if (device_state_ == kDeviceStateWifiConfiguring) {
         audio_service_.EnableAudioTesting(true);
         SetDeviceState(kDeviceStateAudioTesting);
-        return;
+        return true;
     } else if (device_state_ == kDeviceStateAudioTesting) {
         audio_service_.EnableAudioTesting(false);
         SetDeviceState(kDeviceStateWifiConfiguring);
-        return;
+        return true;
     }
 
-    if (!voice_ui_active_) {
+    if (!voice_ui_desired_ && !voice_ui_active_) {
         ESP_LOGW(TAG, "ToggleChatState ignored: voice UI session inactive");
-        return;
+        return false;
     }
 
-    if (!protocol_) {
-        ESP_LOGE(TAG, "Protocol not initialized");
-        return;
+    const bool in_conversation =
+        voice_chat_requested_ ||
+        pending_voice_ui_listen_ ||
+        device_state_ == kDeviceStateConnecting ||
+        device_state_ == kDeviceStateListening ||
+        device_state_ == kDeviceStateSpeaking;
+    if (in_conversation) {
+        CancelVoiceSession();
+        return true;
+    }
+
+    // 主页在 Wi-Fi / OTA / MQTT 完成前就能下滑。协议未就绪时排队，
+    // 等 Start() 末尾再开通道；不要把下滑当成取消激活（否则 state 被打成
+    // Idle，下一次就会误报 Protocol not initialized）。
+    abort_voice_session_ = false;
+    voice_chat_requested_ = true;
+    if (!protocol_ || !boot_ready_ ||
+        device_state_ == kDeviceStateStarting ||
+        device_state_ == kDeviceStateActivating) {
+        pending_voice_ui_listen_ = true;
+        ESP_LOGI(TAG, "ToggleChatState queued until protocol is ready (state=%s protocol=%d boot=%d)",
+                 STATE_STRINGS[device_state_], protocol_ ? 1 : 0, boot_ready_ ? 1 : 0);
+        return true;
     }
 
     if (device_state_ == kDeviceStateIdle) {
         Schedule([this]() {
-            if (!voice_ui_active_ || !protocol_) {
+            if (abort_voice_session_.load() || !voice_ui_desired_ || !protocol_) {
+                pending_voice_ui_listen_ = false;
                 return;
             }
-            if (!protocol_->IsAudioChannelOpened()) {
-                SetDeviceState(kDeviceStateConnecting);
-                if (!protocol_->OpenAudioChannel()) {
+            if (!voice_ui_active_) {
+                ApplyVoiceUiStart();
+                if (!voice_ui_active_) {
+                    pending_voice_ui_listen_ = true;
+                    ESP_LOGI(TAG, "ToggleChatState queued until voice UI session starts");
                     return;
                 }
             }
-
-            SetListeningMode(aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
-        });
-    } else if (device_state_ == kDeviceStateSpeaking) {
-        Schedule([this]() {
-            AbortSpeaking(kAbortReasonNone);
-        });
-    } else if (device_state_ == kDeviceStateListening) {
-        Schedule([this]() {
-            if (protocol_) {
-                protocol_->CloseAudioChannel();
-            }
+            StartVoiceChatFromIdle();
         });
     }
+    return true;
 }
 
 void Application::StartListening() {
@@ -406,14 +411,11 @@ void Application::StartListening() {
     
     if (device_state_ == kDeviceStateIdle) {
         Schedule([this]() {
-            if (!voice_ui_active_ || !protocol_) {
+            if (abort_voice_session_.load() || !voice_ui_active_ || !protocol_) {
                 return;
             }
-            if (!protocol_->IsAudioChannelOpened()) {
-                SetDeviceState(kDeviceStateConnecting);
-                if (!protocol_->OpenAudioChannel()) {
-                    return;
-                }
+            if (!OpenVoiceChannelOrIdle()) {
+                return;
             }
 
             SetListeningMode(kListeningModeManualStop);
@@ -453,6 +455,9 @@ void Application::StopListening() {
 
 void Application::Start() {
     auto& board = Board::GetInstance();
+#ifdef HAVE_LVGL
+    agent_ui::Runtime::Get().OnBoardReady(board);
+#endif
     SetDeviceState(kDeviceStateStarting);
 
     /* Setup the display */
@@ -545,6 +550,7 @@ void Application::Start() {
 // #endif
 
     /* Wait for the network to be ready */
+    SetBootTransferDemand(true);
     board.StartNetwork();
 
     // Update the status bar immediately to show the network state
@@ -554,8 +560,8 @@ void Application::Start() {
     // Check for new assets version
     // CheckAssetsVersion();
 
-    // Check for new firmware version or get the MQTT broker address
-    // Ota ota;
+    // 拉取 MQTT/WebSocket 配置与激活。单分区没有 OTA 槽时 CheckNewVersion
+    // 会跳过固件升级，不挡住后续协议启动。
     CheckNewVersion(ota);
     //加载唤醒词模型
     GetAudioService().SetModelsList(esp_srmodel_init("model"));
@@ -702,10 +708,22 @@ void Application::Start() {
     SystemInfo::PrintHeapStats();
     // 启动流水线完成（联网/OTA/激活/协议）后才标记就绪；勿把 starting 或中途 Idle 当已激活
     boot_ready_ = true;
+    SetBootTransferDemand(false);
     SetDeviceState(kDeviceStateIdle);
-    audio_service_.EnableWakeWordDetection(false);
+    LuaAgentSession::Start();
+    // 唤醒词由主页语音会话接管。启动流水线结束时若 Home 已 desired，
+    // 再同步一次，并兑现开机期间排队的下滑聊天。
+    if (voice_ui_desired_) {
+        Schedule([this]() {
+            SyncVoiceUiSession();
+            FlushPendingVoiceUiListen();
+        });
+    } else {
+        audio_service_.EnableWakeWordDetection(false);
+        pending_voice_ui_listen_ = false;
+    }
 
-    has_server_time_ = ota.HasServerTime();
+    has_server_time_ = false;
     if (protocol_started) {
         std::string message = std::string(Lang::Strings::VERSION) + ota.GetCurrentVersion();
         display->ShowNotification(message.c_str());
@@ -794,14 +812,11 @@ void Application::OnWakeWordDetected() {
     if (device_state_ == kDeviceStateIdle) {
         audio_service_.EncodeWakeWord();
 
-        if (!protocol_->IsAudioChannelOpened()) {
-            SetDeviceState(kDeviceStateConnecting);
-            if (!protocol_->OpenAudioChannel()) {
-                if (voice_ui_active_) {
-                    audio_service_.EnableWakeWordDetection(true);
-                }
-                return;
+        if (!OpenVoiceChannelOrIdle()) {
+            if (voice_ui_active_) {
+                audio_service_.EnableWakeWordDetection(true);
             }
+            return;
         }
 
         auto wake_word = audio_service_.GetLastWakeWord();
@@ -859,10 +874,13 @@ void Application::SetDeviceState(DeviceState state) {
     switch (state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
+            voice_chat_requested_ = false;
+            abort_voice_session_ = false;
+            pending_voice_ui_listen_ = false;
             display->SetStatus(Lang::Strings::STANDBY);
             display->SetEmotion("neutral");
             audio_service_.EnableVoiceProcessing(false);
-            // 唤醒词仅在聊天/数字人会话内开启；桌面必须 Release 掉 AFE。
+            // 唤醒词仅在主页语音会话内开启；离开主页必须 Release 掉 AFE。
             if (voice_ui_active_) {
                 audio_service_.EnableWakeWordDetection(true);
             } else {
@@ -902,10 +920,6 @@ void Application::SetDeviceState(DeviceState state) {
             // Do nothing
             break;
     }
-
-#ifdef HAVE_LVGL
-    ChatScreen::RefreshDeviceState();
-#endif
 }
 
 void Application::Reboot() {
@@ -926,67 +940,12 @@ void Application::Reboot() {
     esp_restart();
 }
 
-bool Application::UpgradeFirmware(Ota& ota, const std::string& url) {
-    auto& board = Board::GetInstance();
-    auto display = board.GetDisplay();
-
-    std::string upgrade_url = url.empty() ? ota.GetFirmwareUrl() : url;
-    std::string version_info = url.empty() ? ota.GetFirmwareVersion() : "(Manual upgrade)";
-
-    if (protocol_ && protocol_->IsAudioChannelOpened()) {
-        ESP_LOGI(TAG, "Closing audio channel before firmware upgrade");
-        protocol_->CloseAudioChannel();
-    }
-    ESP_LOGI(TAG, "Starting firmware upgrade from URL: %s", upgrade_url.c_str());
-
-    SetDeviceState(kDeviceStateUpgrading);
-
-#ifdef HAVE_LVGL
-    std::string version_line = std::string(Lang::Strings::NEW_VERSION) + version_info;
-    OtaScreen::Show(version_line.c_str());
-#else
-    Alert(Lang::Strings::OTA_UPGRADE, Lang::Strings::UPGRADING, "download", Lang::Sounds::OGG_UPGRADE);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    std::string message = std::string(Lang::Strings::NEW_VERSION) + version_info;
-    display->SetChatMessage("system", message.c_str());
-#endif
-
-    board.SetPowerSaveMode(false);
-    audio_service_.Stop();
-    vTaskDelay(pdMS_TO_TICKS(300));
-
-    bool upgrade_success = ota.StartUpgradeFromUrl(upgrade_url, [](int progress, size_t downloaded, size_t total, size_t speed) {
-#ifdef HAVE_LVGL
-        OtaScreen::Update(progress, downloaded, total, speed);
-#else
-        (void)progress;
-        (void)downloaded;
-        (void)total;
-        (void)speed;
-#endif
-    });
-
-    if (!upgrade_success) {
-        ESP_LOGE(TAG, "Firmware upgrade failed, restarting audio service and continuing operation...");
-#ifdef HAVE_LVGL
-        OtaScreen::Dismiss();
-#endif
-        audio_service_.Start();
-        board.SetPowerSaveMode(true);
-        Alert(Lang::Strings::ERROR, Lang::Strings::UPGRADE_FAILED, "circle_xmark", Lang::Sounds::OGG_EXCLAMATION);
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        return false;
-    }
-
-    ESP_LOGI(TAG, "Firmware upgrade successful, rebooting...");
-#ifdef HAVE_LVGL
-    OtaScreen::SetStatusMessage("升级成功，即将重启...");
-#else
-    display->SetChatMessage("system", "Upgrade successful, rebooting...");
-#endif
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    Reboot();
-    return true;
+bool Application::UpgradeFirmware(Ota& /*ota*/, const std::string& /*url*/) {
+    // 启动路径不会走到这里（无 OTA 槽时 CheckNewVersion 已跳过）。
+    // 手动触发时也直接拒绝，避免下载固件后无法落盘而卡住。
+    ESP_LOGW(TAG, "Firmware upgrade refused (no OTA update partition)");
+    Alert(Lang::Strings::ERROR, "OTA 已禁用", "circle_xmark", Lang::Sounds::OGG_EXCLAMATION);
+    return false;
 }
 
 void Application::WakeWordInvoke(const std::string& wake_word) {
@@ -997,14 +956,11 @@ void Application::WakeWordInvoke(const std::string& wake_word) {
     if (device_state_ == kDeviceStateIdle) {
         audio_service_.EncodeWakeWord();
 
-        if (!protocol_->IsAudioChannelOpened()) {
-            SetDeviceState(kDeviceStateConnecting);
-            if (!protocol_->OpenAudioChannel()) {
-                if (voice_ui_active_) {
-                    audio_service_.EnableWakeWordDetection(true);
-                }
-                return;
+        if (!OpenVoiceChannelOrIdle()) {
+            if (voice_ui_active_) {
+                audio_service_.EnableWakeWordDetection(true);
             }
+            return;
         }
 
         ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
@@ -1108,9 +1064,6 @@ void Application::ApplyInterruptPreferenceFromNvs() {
 }
 
 void Application::PlaySound(const std::string_view& sound) {
-    if (activation_suspended_) {
-        return;
-    }
     audio_service_.PlaySound(sound);
 }
 
@@ -1228,6 +1181,7 @@ void Application::SetVoiceUiDesired(bool desired) {
 
     if (!desired) {
         // 立刻软停（降 CPU），硬 destroy 延后；若很快再进页则取消 destroy。
+        pending_voice_ui_listen_ = false;
         voice_ui_active_ = false;
         SoftStopVoiceAudioPaths();
         if (voice_ui_start_retry_timer_ != nullptr) {
@@ -1293,10 +1247,12 @@ void Application::ApplyVoiceUiStart() {
             audio_service_.EnableVoiceProcessing(false);
             if (!TryEnableWakeWordForVoiceUi()) {
                 ScheduleVoiceUiStartRetry(epoch);
+                FlushPendingVoiceUiListen();
                 return;
             }
         }
         ESP_LOGI(TAG, "voice UI already active");
+        FlushPendingVoiceUiListen();
         return;
     }
 
@@ -1325,6 +1281,32 @@ void Application::ApplyVoiceUiStart() {
                device_state_ != kDeviceStateUpgrading) {
         SetDeviceState(kDeviceStateIdle);
     }
+    FlushPendingVoiceUiListen();
+}
+
+void Application::StartVoiceChatFromIdle() {
+    if (abort_voice_session_.load() || !voice_ui_active_ || !voice_ui_desired_ ||
+        !protocol_) {
+        return;
+    }
+    if (device_state_ != kDeviceStateIdle) {
+        return;
+    }
+    if (!OpenVoiceChannelOrIdle()) {
+        return;
+    }
+    SetListeningMode(aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
+}
+
+void Application::FlushPendingVoiceUiListen() {
+    if (!pending_voice_ui_listen_ || !voice_ui_active_ || !voice_ui_desired_) {
+        return;
+    }
+    if (abort_voice_session_.load() || device_state_ != kDeviceStateIdle) {
+        return;
+    }
+    pending_voice_ui_listen_ = false;
+    StartVoiceChatFromIdle();
 }
 
 void Application::ApplyVoiceUiStop() {
@@ -1333,4 +1315,70 @@ void Application::ApplyVoiceUiStop() {
     ParkVoiceUiProtocol();
     SoftStopVoiceAudioPaths();
     ESP_LOGI(TAG, "ApplyVoiceUiStop: AFE destroyed, protocol parked");
+}
+
+void Application::CancelVoiceSession() {
+    ESP_LOGI(TAG, "Cancel voice session (state=%s)", STATE_STRINGS[device_state_]);
+    pending_voice_ui_listen_ = false;
+    voice_chat_requested_ = false;
+    abort_voice_session_ = true;
+    if (protocol_) {
+        protocol_->CancelOpenAudioChannel();
+    }
+    Schedule([this]() { EndVoiceSessionToIdle(); });
+}
+
+void Application::EndVoiceSessionToIdle() {
+    pending_voice_ui_listen_ = false;
+    voice_chat_requested_ = false;
+
+    if (device_state_ == kDeviceStateSpeaking) {
+        AbortSpeaking(kAbortReasonNone);
+    } else if (device_state_ == kDeviceStateListening && protocol_) {
+        protocol_->SendStopListening();
+    }
+
+    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+        protocol_->CloseAudioChannel();
+    }
+    audio_service_.ResetDecoder();
+    if (device_state_ == kDeviceStateConnecting ||
+        device_state_ == kDeviceStateListening ||
+        device_state_ == kDeviceStateSpeaking) {
+        SetDeviceState(kDeviceStateIdle);
+    } else {
+        abort_voice_session_ = false;
+    }
+}
+
+bool Application::OpenVoiceChannelOrIdle() {
+    if (abort_voice_session_.load()) {
+        EndVoiceSessionToIdle();
+        return false;
+    }
+    voice_chat_requested_ = true;
+    if (protocol_->IsAudioChannelOpened()) {
+        return true;
+    }
+    SetDeviceState(kDeviceStateConnecting);
+    const bool opened =
+        protocol_->OpenAudioChannel() && !abort_voice_session_.load();
+    if (!opened) {
+        if (protocol_ && protocol_->IsAudioChannelOpened()) {
+            protocol_->CloseAudioChannel();
+        }
+        if (device_state_ == kDeviceStateConnecting) {
+            SetDeviceState(kDeviceStateIdle);
+        }
+        return false;
+    }
+    return true;
+}
+
+void Application::ForceReturnToIdle() {
+    CancelVoiceSession();
+}
+
+void Application::SetLowPowerStandby(bool enabled) {
+    low_power_standby_.store(enabled);
 }

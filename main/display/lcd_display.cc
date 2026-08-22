@@ -19,7 +19,10 @@
 #include "board.h"
 #include "mmap_generate_resources.h"
 #include "screen/boot_screen/boot_screen.h"
-#include "screen/home_screen/home_screen.h"
+#include "agent_ui/agent_ui_runtime.h"
+#include "agent_ui/apps/boot/boot_view.h"
+#include "application.h"
+#include "device_state.h"
 
 #define TAG "LcdDisplay"
 
@@ -252,41 +255,42 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
 
     ESP_LOGI(TAG, "Initialize LVGL port");
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
-    // NetworkScreen has a deeper LVGL object tree than the home screen.  The
+    // Some Agent UI screens have a deeper LVGL object tree than the home
+    // screen.  The
     // port default (7168 bytes) overflows while recursively drawing it.
     port_cfg.task_stack = 12 * 1024;
     lvgl_port_init(&port_cfg);
 
-    ESP_LOGI(TAG, "Adding LCD display");
+    ESP_LOGI(TAG, "Adding LCD display (swap_xy=%d mirror_x=%d mirror_y=%d)",
+             swap_xy, mirror_x, mirror_y);
+    // Software rotation: ST7701 MIPI cannot change scan direction after DPI
+    // start (Command2 bank switch causes stripes/flicker). Do not use
+    // direct_mode / avoid_tearing — those bind LVGL to the DPI framebuffers
+    // and cannot be rotated in the flush path.
     const lvgl_port_display_cfg_t disp_cfg = {
         .io_handle = panel_io,
         .panel_handle = panel,
         .control_handle = nullptr,
-        .buffer_size = static_cast<uint32_t>(width_ * height_ * 50),
+        .buffer_size = static_cast<uint32_t>(width_ * 50),
         .double_buffer = true,
         .hres = static_cast<uint32_t>(width_),
         .vres = static_cast<uint32_t>(height_),
+        .rotation = {
+            .swap_xy = false,
+            .mirror_x = false,
+            .mirror_y = false,
+        },
         .color_format = color_format,
         .flags = {
-            .direct_mode = true,
+            .buff_dma = true,
+            .buff_spiram = false,
+            .sw_rotate = true,
         },
-        // .monochrome = false,
-        /* Rotation values must be same as used in esp_lcd for initial settings of the screen */
-        // .rotation = {
-        //     .swap_xy = swap_xy,
-        //     .mirror_x = mirror_x,
-        //     .mirror_y = mirror_y,
-        // },
-        // .flags = {
-        //     .buff_dma = true,
-        //     .buff_spiram =false,
-        //     .sw_rotate = true,
-        // },
     };
     ESP_LOGI(TAG, "LVGL lvgl_port_display_dsi_cfg_t");
     const lvgl_port_display_dsi_cfg_t dpi_cfg = {
         .flags = {
-            .avoid_tearing = true,
+            .avoid_tearing = false,
         }
     };
     display_ = lvgl_port_add_disp_dsi(&disp_cfg, &dpi_cfg);
@@ -298,12 +302,21 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
     if (offset_x != 0 || offset_y != 0) {
         lv_display_set_offset(display_, offset_x, offset_y);
     }
+
+    if (mirror_x && mirror_y) {
+        lvgl_port_lock(0);
+        lv_display_set_rotation(display_, LV_DISPLAY_ROTATION_180);
+        lvgl_port_unlock();
+        ESP_LOGI(TAG, "LVGL software rotation 180");
+    } else if (swap_xy || mirror_x || mirror_y) {
+        ESP_LOGW(TAG, "MIPI SW rotate only implements 180 (mirror_x && mirror_y)");
+    }
     ESP_LOGI(TAG, "LVGL 初始化完成");
     SetupStartupUI();
 }
 
 void MipiLcdDisplay::SetupStartupUI() {
-    // The boot animation and HomeScreen use assets from the resources partition.
+    // The boot animation and home UI use assets from the resources partition.
     // Mount it through esp_lv_fs directly so this display can keep using the
     // regular esp_lvgl_port/DSI path instead of requiring esp_lv_adapter.
     static mmap_assets_handle_t assets = nullptr;
@@ -352,17 +365,13 @@ void MipiLcdDisplay::SetupStartupUI() {
     }
 
     DisplayLockGuard lock(this);
-    lv_obj_t* boot_scr = BootScreen::Create();
+    agent_ui::Runtime::Get().Initialize();
+    lv_obj_t* boot_scr = agent_ui::BootView::Create();
     lv_screen_load(boot_scr);
 
     lv_timer_t* timer = lv_timer_create(
         [](lv_timer_t* timer) {
-            lv_obj_t* old_scr = lv_screen_active();
-            lv_obj_t* home_scr = HomeScreen::Create();
-            lv_screen_load(home_scr);
-            if (old_scr != nullptr && old_scr != home_scr) {
-                lv_obj_delete(old_scr);
-            }
+            agent_ui::Runtime::Get().Start();
             lv_timer_delete(timer);
         },
         2000, nullptr);
@@ -379,6 +388,21 @@ bool MipiLcdDisplay::AddTouch(esp_lcd_touch_handle_t touch_handle) {
         .handle = touch_handle,
     };
     return lvgl_port_add_touch(&touch_cfg) != nullptr;
+}
+
+bool LcdDisplay::SetPowerSaveModeChecked(bool on) {
+    if (panel_ == nullptr) {
+        SetPowerSaveMode(on);
+        return true;
+    }
+    const esp_err_t err = esp_lcd_panel_disp_on_off(panel_, !on);
+    if (err == ESP_OK || err == ESP_ERR_NOT_SUPPORTED) {
+        SetPowerSaveMode(on);
+        return true;
+    }
+    ESP_LOGW(TAG, "panel power save %s failed: %s",
+             on ? "on" : "off", esp_err_to_name(err));
+    return false;
 }
 
 LcdDisplay::~LcdDisplay() {
@@ -1055,6 +1079,16 @@ void LcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
 }
 
 void LcdDisplay::SetChatMessage(const char* role, const char* content) {
+    if (role != nullptr && content != nullptr && content[0] != '\0') {
+        const bool is_user = std::strcmp(role, "user") == 0;
+        const bool is_assistant = std::strcmp(role, "assistant") == 0;
+        if (is_user || is_assistant) {
+            agent_ui::Runtime::Get().SetConversationMessage(role, content);
+        }
+    }
+    if (chat_message_label_ == nullptr) {
+        return;
+    }
     DisplayLockGuard lock(this);
     if (chat_message_label_ == nullptr) {
         return;
@@ -1064,6 +1098,9 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
 #endif
 
 void LcdDisplay::SetEmotion(const char* emotion) {
+    if (emotion != nullptr && std::strcmp(emotion, "dizzy") == 0) {
+        agent_ui::Runtime::Get().PlayDizzyExpression();
+    }
     // Stop any running GIF animation
     if (gif_controller_) {
         DisplayLockGuard lock(this);

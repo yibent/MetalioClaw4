@@ -6,7 +6,7 @@
 #include <esp_log.h>
 #include <lvgl.h>
 
-#include "home_screen/home_screen.h"
+#include "power_view.h"
 #include "settings.h"
 #include "standby_screen/standby_screen.h"
 
@@ -75,7 +75,7 @@ void OnIdleTick(lv_timer_t* /*timer*/) {
             std::snprintf(reason, sizeof(reason),
                           I18n::T("无操作 %u 分钟自动关机"),
                           static_cast<unsigned>(shutdown_ms / (60U * 1000U)));
-            HomeScreen::RequestSystemShutdown(reason);
+            agent_ui::PowerView::BeginShutdown(reason);
         }
         return;
     }

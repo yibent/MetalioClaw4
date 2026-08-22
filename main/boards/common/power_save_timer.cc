@@ -1,5 +1,6 @@
 #include "power_save_timer.h"
 #include "application.h"
+#include "board.h"
 #include "settings.h"
 
 #include <esp_log.h>

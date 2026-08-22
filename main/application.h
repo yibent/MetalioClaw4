@@ -10,11 +10,13 @@
 #include <mutex>
 #include <deque>
 #include <memory>
+#include <atomic>
 
 #include "protocol.h"
 #include "ota.h"
 #include "audio_service.h"
 #include "device_state_event.h"
+#include "ai_provider_config.h"
 
 
 #define MAIN_EVENT_SCHEDULE (1 << 0)
@@ -50,7 +52,8 @@ public:
     void Alert(const char* status, const char* message, const char* emotion = "", const std::string_view& sound = "");
     void DismissAlert();
     void AbortSpeaking(AbortReason reason);
-    void ToggleChatState();
+    // 无语音 UI 会话时丢弃请求并返回 false，供主页把「连接中」滚回待机。
+    bool ToggleChatState();
     void StartListening();
     void StopListening();
     void Reboot();
@@ -63,24 +66,29 @@ public:
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
 
-    // 语音 UI 会话（聊天页 / 数字人页）：唤醒词仅在会话内开启。
+    // 语音 UI 会话（主页）：唤醒词仅在会话内开启。
     // desired=false：立刻软停（停 Feed / disable_wakenet），延迟硬 destroy AFE，
-    // 以便快速再进聊天/数字人时复用引擎，避免低内存下重建崩溃。
+    // 以便快速再回主页时复用引擎，避免低内存下重建崩溃。
     void SetVoiceUiDesired(bool desired);
     bool IsVoiceUiActive() const { return voice_ui_active_; }
     bool IsVoiceUiDesired() const { return voice_ui_desired_; }
 
     bool HasPendingActivation() const {
-        return !activation_suspended_ && !pending_activation_code_.empty();
+        return !pending_activation_code_.empty();
     }
     const std::string& GetPendingActivationCode() const { return pending_activation_code_; }
     // 启动流水线已走到 Idle，且当前无需等待激活码 / 不在 activating。
     bool IsDeviceActivated() const;
     bool IsBootReady() const { return boot_ready_; }
-    void SetActivationSuspended(bool suspended);
-    bool IsActivationSuspended() const { return activation_suspended_; }
-    void StopSystemAudioForStressTest();
-    void RestoreSystemAudioAfterStressTest();
+
+    void ForceReturnToIdle();
+    bool IsVoiceSessionAborted() const { return abort_voice_session_.load(); }
+    void SetLowPowerStandby(bool enabled);
+    bool IsLowPowerStandby() const { return low_power_standby_.load(); }
+    bool IsCodexVoiceCaptureActive() const { return false; }
+    void TriggerSpecialInteraction(int /*interaction*/) {}
+    bool IsHermesVoiceBusy() const { return false; }
+    void ApplyAiProviderSelection(const AiProviderConfig&) {}
 
 private:
     Application();
@@ -99,7 +107,6 @@ private:
     std::string last_error_message_;
     AudioService audio_service_;
     std::string pending_activation_code_;
-    volatile bool activation_suspended_ = false;
     // 仅在 Application::Start() 末尾首次进入 Idle 后置位；starting/activating 期间为 false。
     volatile bool boot_ready_ = false;
     // UI 期望：页面 enter/leave 写入；Sync 在主循环对齐实际会话。
@@ -108,8 +115,15 @@ private:
     volatile bool voice_ui_active_ = false;
     // 使延迟 Release / 启动重试失效（leave/enter 递增）。
     volatile uint32_t voice_ui_epoch_ = 0;
+    std::atomic<bool> low_power_standby_{false};
     uint32_t voice_ui_pending_release_epoch_ = 0;
     uint32_t voice_ui_pending_retry_epoch_ = 0;
+    // 主页已 desired，但 AFE 尚未 active：下滑聊天先排队，会话起来后再开通道。
+    volatile bool pending_voice_ui_listen_ = false;
+    // 下滑已请求开麦（含乐观 Connecting），用于上划在设备仍是 Idle 时也能退出。
+    volatile bool voice_chat_requested_ = false;
+    // 上划退出：打断正在阻塞的 OpenAudioChannel，并丢掉已排队的下滑开麦。
+    std::atomic<bool> abort_voice_session_{false};
 
     void SyncVoiceUiSession();
     void TearDownVoiceAudioPaths(bool release_wake_word);
@@ -121,6 +135,11 @@ private:
     void CancelVoiceUiHardRelease();
     void ScheduleVoiceUiStartRetry(uint32_t epoch);
     bool TryEnableWakeWordForVoiceUi();
+    void StartVoiceChatFromIdle();
+    void FlushPendingVoiceUiListen();
+    void CancelVoiceSession();
+    void EndVoiceSessionToIdle();
+    bool OpenVoiceChannelOrIdle();
 
     bool has_server_time_ = false;
     bool aborted_ = false;

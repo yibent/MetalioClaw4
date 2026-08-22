@@ -12,7 +12,9 @@
 #include "esp_wifi_remote.h"
 #endif
 
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
 #include "dual_network_board.h"
+#endif
 
 #define TAG "SystemInfo"
 
@@ -48,6 +50,7 @@ size_t SystemInfo::GetFreeHeapSize() {
 std::string SystemInfo::GetMacAddress() {
     uint8_t mac[6];
 #if CONFIG_IDF_TARGET_ESP32P4
+#if CONFIG_BOARD_TYPE_METALIO_CLAW_4
     const auto* dual = dynamic_cast<const DualNetworkBoard*>(&Board::GetInstance());
     if (dual != nullptr) {
         /* 双网板：统一读主机基址 MAC，不依赖当前选 WiFi 还是 4G、也不触发 esp-hosted RPC */
@@ -55,6 +58,9 @@ std::string SystemInfo::GetMacAddress() {
     } else {
         esp_wifi_get_mac(WIFI_IF_STA, mac);
     }
+#else
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+#endif
 #else
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
 #endif
