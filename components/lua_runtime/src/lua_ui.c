@@ -275,6 +275,24 @@ static void apply_geometry(lv_obj_t* object, int x, int y, int width, int height
     lv_obj_set_size(object, width, height);
 }
 
+/* CubeMax simulator accepts ui.rect(parent, { ... }) as well as ui.rect({ parent = ... }). */
+static int widget_table_index(lua_State* state) {
+    if (lua_istable(state, 1) && (lua_gettop(state) < 2 || lua_isnoneornil(state, 2))) {
+        return 1;
+    }
+    if (lua_isinteger(state, 1) && lua_istable(state, 2)) {
+        lua_getfield(state, 2, "parent");
+        const int missing = lua_isnoneornil(state, -1);
+        lua_pop(state, 1);
+        if (missing) {
+            lua_pushvalue(state, 1);
+            lua_setfield(state, 2, "parent");
+        }
+        return 2;
+    }
+    return luaL_error(state, "ui widget expects a table, or (parent, table)");
+}
+
 static lv_obj_t* read_parent(lua_State* state, ui_context_t* context, int table_index) {
     lua_getfield(state, table_index, "parent");
     int parent_id = lua_isinteger(state, -1) ? (int)lua_tointeger(state, -1) : 0;
@@ -340,16 +358,16 @@ static int l_load(lua_State* state) {
 }
 
 static int l_rect(lua_State* state) {
-    luaL_checktype(state, 1, LUA_TTABLE);
+    const int opts = widget_table_index(state);
     ui_context_t* context = get_context(state);
-    const char* event_id = read_string(state, 1, "event_id", NULL);
-    lv_obj_t* parent = read_parent(state, context, 1);
-    int x = read_integer(state, 1, "x", 0);
-    int y = read_integer(state, 1, "y", 0);
-    int width = read_integer(state, 1, "width", LV_SIZE_CONTENT);
-    int height = read_integer(state, 1, "height", LV_SIZE_CONTENT);
-    uint32_t color = read_color(state, 1, "color", 0x30363d);
-    int radius = read_integer(state, 1, "radius", 0);
+    const char* event_id = read_string(state, opts, "event_id", NULL);
+    lv_obj_t* parent = read_parent(state, context, opts);
+    int x = read_integer(state, opts, "x", 0);
+    int y = read_integer(state, opts, "y", 0);
+    int width = read_integer(state, opts, "width", LV_SIZE_CONTENT);
+    int height = read_integer(state, opts, "height", LV_SIZE_CONTENT);
+    uint32_t color = read_color(state, opts, "color", 0x30363d);
+    int radius = read_integer(state, opts, "radius", 0);
     if (!ui_lock())
         return luaL_error(state, "display lock failed");
     lv_obj_t* object = lv_obj_create(parent);
@@ -373,14 +391,14 @@ static int l_rect(lua_State* state) {
 }
 
 static int l_circle(lua_State* state) {
-    luaL_checktype(state, 1, LUA_TTABLE);
+    const int opts = widget_table_index(state);
     ui_context_t* context = get_context(state);
-    lv_obj_t* parent = read_parent(state, context, 1);
-    int x = read_integer(state, 1, "x", 0), y = read_integer(state, 1, "y", 0);
-    int radius = read_integer(state, 1, "radius", 10);
-    uint32_t color = read_color(state, 1, "color", 0xffffff);
-    int opacity = read_integer(state, 1, "opacity", 255);
-    const char* event_id = read_string(state, 1, "event_id", NULL);
+    lv_obj_t* parent = read_parent(state, context, opts);
+    int x = read_integer(state, opts, "x", 0), y = read_integer(state, opts, "y", 0);
+    int radius = read_integer(state, opts, "radius", 10);
+    uint32_t color = read_color(state, opts, "color", 0xffffff);
+    int opacity = read_integer(state, opts, "opacity", 255);
+    const char* event_id = read_string(state, opts, "event_id", NULL);
     if (radius <= 0)
         return luaL_argerror(state, 1, "radius must be positive");
     if (opacity < 0 || opacity > 255)
@@ -441,19 +459,19 @@ static bool parse_points(lua_State* state, int table_index, lv_point_precise_t**
 }
 
 static int l_line(lua_State* state) {
-    luaL_checktype(state, 1, LUA_TTABLE);
+    const int opts = widget_table_index(state);
     ui_context_t* context = get_context(state);
-    lv_obj_t* parent = read_parent(state, context, 1);
+    lv_obj_t* parent = read_parent(state, context, opts);
     lv_point_precise_t* points = NULL;
     uint32_t count = 0;
-    if (!parse_points(state, 1, &points, &count))
+    if (!parse_points(state, opts, &points, &count))
         return luaL_error(state, "points must contain at least two {x,y} entries");
-    uint32_t color = read_color(state, 1, "color", 0xffffff);
-    int width = read_integer(state, 1, "width", 2);
-    lua_getfield(state, 1, "rounded");
+    uint32_t color = read_color(state, opts, "color", 0xffffff);
+    int width = read_integer(state, opts, "width", 2);
+    lua_getfield(state, opts, "rounded");
     bool rounded = lua_toboolean(state, -1);
     lua_pop(state, 1);
-    const char* event_id = read_string(state, 1, "event_id", NULL);
+    const char* event_id = read_string(state, opts, "event_id", NULL);
     if (width <= 0) {
         free(points);
         return luaL_argerror(state, 1, "width must be positive");
@@ -483,16 +501,16 @@ static int l_line(lua_State* state) {
 }
 
 static int l_arc(lua_State* state) {
-    luaL_checktype(state, 1, LUA_TTABLE);
+    const int opts = widget_table_index(state);
     ui_context_t* context = get_context(state);
-    lv_obj_t* parent = read_parent(state, context, 1);
-    int x = read_integer(state, 1, "x", 0), y = read_integer(state, 1, "y", 0),
-        w = read_integer(state, 1, "width", 80), h = read_integer(state, 1, "height", 80);
-    int start = read_integer(state, 1, "start_angle", 0),
-        end = read_integer(state, 1, "end_angle", 360),
-        width = read_integer(state, 1, "line_width", 4);
-    uint32_t color = read_color(state, 1, "color", 0xffffff);
-    const char* event_id = read_string(state, 1, "event_id", NULL);
+    lv_obj_t* parent = read_parent(state, context, opts);
+    int x = read_integer(state, opts, "x", 0), y = read_integer(state, opts, "y", 0),
+        w = read_integer(state, opts, "width", 80), h = read_integer(state, opts, "height", 80);
+    int start = read_integer(state, opts, "start_angle", 0),
+        end = read_integer(state, opts, "end_angle", 360),
+        width = read_integer(state, opts, "line_width", 4);
+    uint32_t color = read_color(state, opts, "color", 0xffffff);
+    const char* event_id = read_string(state, opts, "event_id", NULL);
     if (w <= 0 || h <= 0 || width <= 0)
         return luaL_argerror(state, 1, "arc width, height, and line_width must be positive");
     if (!ui_lock())
@@ -520,21 +538,21 @@ static int l_arc(lua_State* state) {
 }
 
 static int l_image(lua_State* state) {
-    luaL_checktype(state, 1, LUA_TTABLE);
+    const int opts = widget_table_index(state);
     ui_context_t* context = get_context(state);
-    const char* src = read_string(state, 1, "src", NULL);
+    const char* src = read_string(state, opts, "src", NULL);
     if (!src)
         return luaL_error(state, "image src is required");
-    lv_obj_t* parent = read_parent(state, context, 1);
-    int x = read_integer(state, 1, "x", 0), y = read_integer(state, 1, "y", 0),
-        rotation = read_integer(state, 1, "rotation", 0),
-        scale = read_integer(state, 1, "scale", 256),
-        opacity = read_integer(state, 1, "opacity", 255);
-    int pivot_x = read_integer(state, 1, "pivot_x", 0),
-        pivot_y = read_integer(state, 1, "pivot_y", 0),
-        offset_x = read_integer(state, 1, "offset_x", 0),
-        offset_y = read_integer(state, 1, "offset_y", 0);
-    const char* event_id = read_string(state, 1, "event_id", NULL);
+    lv_obj_t* parent = read_parent(state, context, opts);
+    int x = read_integer(state, opts, "x", 0), y = read_integer(state, opts, "y", 0),
+        rotation = read_integer(state, opts, "rotation", 0),
+        scale = read_integer(state, opts, "scale", 256),
+        opacity = read_integer(state, opts, "opacity", 255);
+    int pivot_x = read_integer(state, opts, "pivot_x", 0),
+        pivot_y = read_integer(state, opts, "pivot_y", 0),
+        offset_x = read_integer(state, opts, "offset_x", 0),
+        offset_y = read_integer(state, opts, "offset_y", 0);
+    const char* event_id = read_string(state, opts, "event_id", NULL);
     if (scale <= 0)
         return luaL_argerror(state, 1, "scale must be positive");
     if (opacity < 0 || opacity > 255)
@@ -583,14 +601,14 @@ static int l_image(lua_State* state) {
 }
 
 static int l_label(lua_State* state) {
-    luaL_checktype(state, 1, LUA_TTABLE);
+    const int opts = widget_table_index(state);
     ui_context_t* context = get_context(state);
-    const char* text = read_string(state, 1, "text", "");
-    lv_obj_t* parent = read_parent(state, context, 1);
-    int x = read_integer(state, 1, "x", 0);
-    int y = read_integer(state, 1, "y", 0);
-    int width = read_integer(state, 1, "width", LV_SIZE_CONTENT);
-    uint32_t color = read_color(state, 1, "color", 0xffffff);
+    const char* text = read_string(state, opts, "text", "");
+    lv_obj_t* parent = read_parent(state, context, opts);
+    int x = read_integer(state, opts, "x", 0);
+    int y = read_integer(state, opts, "y", 0);
+    int width = read_integer(state, opts, "width", LV_SIZE_CONTENT);
+    uint32_t color = read_color(state, opts, "color", 0xffffff);
     if (!ui_lock())
         return luaL_error(state, "display lock failed");
     lv_obj_t* object = lv_label_create(parent);
@@ -611,18 +629,18 @@ static int l_label(lua_State* state) {
 }
 
 static int l_button(lua_State* state) {
-    luaL_checktype(state, 1, LUA_TTABLE);
+    const int opts = widget_table_index(state);
     ui_context_t* context = get_context(state);
-    const char* text = read_string(state, 1, "text", "Button");
-    const char* event_id = read_string(state, 1, "event_id", "button");
-    lv_obj_t* parent = read_parent(state, context, 1);
-    int x = read_integer(state, 1, "x", 0);
-    int y = read_integer(state, 1, "y", 0);
-    int width = read_integer(state, 1, "width", LV_SIZE_CONTENT);
-    int height = read_integer(state, 1, "height", LV_SIZE_CONTENT);
-    uint32_t color = read_color(state, 1, "color", 0x2563eb);
-    uint32_t text_color = read_color(state, 1, "text_color", 0xffffff);
-    int radius = read_integer(state, 1, "radius", 6);
+    const char* text = read_string(state, opts, "text", "Button");
+    const char* event_id = read_string(state, opts, "event_id", "button");
+    lv_obj_t* parent = read_parent(state, context, opts);
+    int x = read_integer(state, opts, "x", 0);
+    int y = read_integer(state, opts, "y", 0);
+    int width = read_integer(state, opts, "width", LV_SIZE_CONTENT);
+    int height = read_integer(state, opts, "height", LV_SIZE_CONTENT);
+    uint32_t color = read_color(state, opts, "color", 0x2563eb);
+    uint32_t text_color = read_color(state, opts, "text_color", 0xffffff);
+    int radius = read_integer(state, opts, "radius", 6);
     if (!ui_lock())
         return luaL_error(state, "display lock failed");
     lv_obj_t* button = lv_button_create(parent);

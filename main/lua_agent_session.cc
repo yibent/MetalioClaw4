@@ -841,12 +841,16 @@ void HandleMessage(char* text) {
                strcmp(type, "hello.welcome") == 0 || strcmp(type, "error") == 0) {
         ESP_LOGI(TAG, "recv type=%s id=%s", type, id);
     } else if (strcmp(type, "run") == 0) {
+        ESP_LOGI(TAG, "recv type=run id=%s", id);
         HandleRun(root);
     } else if (strcmp(type, "speak") == 0) {
+        ESP_LOGI(TAG, "recv type=speak id=%s", id);
         HandleSpeak(root);
     } else if (strcmp(type, "cancel") == 0) {
+        ESP_LOGI(TAG, "recv type=cancel id=%s", id);
         HandleCancel(root);
     } else {
+        ESP_LOGW(TAG, "recv type=%s id=%s (unknown)", type, id);
         SendError(id, "invalid", "unknown type");
     }
     cJSON_Delete(root);
