@@ -151,9 +151,13 @@ struct Adapter::Impl {
 
     void ResumeWakeWord() {
         if (!wake_word_paused.exchange(false)) return;
+        auto& app = Application::GetInstance();
+        if (!app.IsVoiceUiDesired()) {
+            ESP_LOGI(TAG, "Skip wake word resume: voice UI session inactive");
+            return;
+        }
         ESP_LOGI(TAG, "Resuming wake word after Bluetooth releases the I2S input");
-        Application::GetInstance().GetAudioService().EnableWakeWordDetection(
-            true);
+        app.GetAudioService().EnableWakeWordDetection(true);
     }
 
     void ClearConnectionExpectations() {

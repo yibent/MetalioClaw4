@@ -1,5 +1,6 @@
 #include "haptic_feedback.h"
 
+#include "config.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_log.h"
@@ -9,9 +10,7 @@ namespace agent_ui {
 namespace {
 
 constexpr char kTag[] = "HapticFeedback";
-// Fangtang uses GPIO 22 as GT911 reset. Keep haptics disabled unless a
-// dedicated motor pin is assigned for the board.
-constexpr gpio_num_t kMotorPin = GPIO_NUM_NC;
+constexpr gpio_num_t kMotorPin = HAPTIC_MOTOR_GPIO;
 constexpr ledc_mode_t kSpeedMode = LEDC_LOW_SPEED_MODE;
 constexpr ledc_timer_t kTimer = LEDC_TIMER_1;
 constexpr ledc_channel_t kChannel = LEDC_CHANNEL_1;
@@ -77,6 +76,10 @@ void OnButtonClicked(lv_event_t*) {
 }  // namespace
 
 void PlayHaptic(HapticStrength strength) {
+    if (kMotorPin == GPIO_NUM_NC) {
+        return;
+    }
+
     if (strength == HapticStrength::Light) {
         const int64_t now_us = esp_timer_get_time();
         if (s_last_light_pulse_us != 0 &&
@@ -110,7 +113,7 @@ void PlayHaptic(HapticStrength strength) {
 }
 
 void AttachButtonHaptic(lv_obj_t* button) {
-    if (button == nullptr) return;
+    if (button == nullptr || kMotorPin == GPIO_NUM_NC) return;
     lv_obj_add_event_cb(button, OnButtonClicked, LV_EVENT_CLICKED, nullptr);
 }
 

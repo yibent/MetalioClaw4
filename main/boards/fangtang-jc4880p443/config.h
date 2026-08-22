@@ -54,6 +54,8 @@
 
 #define LCD_TOUCH_RST       GPIO_NUM_22
 #define LCD_TOUCH_INT       GPIO_NUM_21
+// No vibration motor on this board. GPIO 22 is GT911 reset, not a motor pin.
+#define HAPTIC_MOTOR_GPIO   GPIO_NUM_NC
 #define LCD_TOUCH_SWAP_XY   false
 // LVGL ROTATION_180 already remaps pointer coords; keep GT911 in panel space.
 #define LCD_TOUCH_MIRROR_X  false

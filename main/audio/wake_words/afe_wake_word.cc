@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <sdkconfig.h>
 #include <esp_timer.h>
 #include <opus_encoder.h>
 #include <memory>
@@ -14,6 +15,31 @@
 #define DETECTION_TASK_EXIT     (1 << 1)
 
 #define TAG "AfeWakeWord"
+
+#if CONFIG_IDF_TARGET_ESP32P4 && CONFIG_ESP_SYSTEM_ALLOW_RTC_FAST_MEM_AS_HEAP
+// ESP32-P4 LP SRAM（0x50108000）在 INTERNAL 堆的低优先级回落里。PIE/SIMD
+// 不能 128-bit 访问这块区域。WakeNet 卷积若把 bias/scratch 分到这里会
+// Store/Load access fault。钉住剩余 LP 堆，迫使 AFE 只用 HP SRAM / PSRAM。
+static void PinLpSramAwayFromSimd() {
+    static void* s_lp_pin = nullptr;
+    if (s_lp_pin != nullptr) {
+        return;
+    }
+    const size_t free_sz = heap_caps_get_free_size(MALLOC_CAP_RTCRAM);
+    if (free_sz < 1024) {
+        return;
+    }
+    constexpr size_t kLeaveForIdf = 512;
+    const size_t pin = free_sz > kLeaveForIdf ? free_sz - kLeaveForIdf : free_sz;
+    s_lp_pin = heap_caps_malloc(pin, MALLOC_CAP_RTCRAM);
+    if (s_lp_pin != nullptr) {
+        ESP_LOGI(TAG, "Pinned %u bytes of LP SRAM away from WakeNet",
+                 (unsigned)pin);
+    } else {
+        ESP_LOGW(TAG, "Failed to pin LP SRAM (%u bytes free)", (unsigned)free_sz);
+    }
+}
+#endif
 
 AfeWakeWord::AfeWakeWord()
     : afe_data_(nullptr),
@@ -105,11 +131,23 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     afe_config->afe_perferred_priority = 1;
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
 
+#if CONFIG_IDF_TARGET_ESP32P4 && CONFIG_ESP_SYSTEM_ALLOW_RTC_FAST_MEM_AS_HEAP
+    PinLpSramAwayFromSimd();
+#endif
+
     afe_iface_ = esp_afe_handle_from_config(afe_config);
     afe_data_ = afe_iface_->create_from_config(afe_config);
     afe_config_free(afe_config);
     if (afe_data_ == nullptr) {
         ESP_LOGE(TAG, "create_from_config failed");
+        afe_iface_ = nullptr;
+        return false;
+    }
+    // 堆紧张时偶发返回非空坏句柄；feed size 非法则立刻毁掉，避免卷积 Load fault。
+    if (afe_iface_->get_feed_chunksize(afe_data_) <= 0) {
+        ESP_LOGE(TAG, "AFE created with invalid feed size, destroying");
+        afe_iface_->destroy(afe_data_);
+        afe_data_ = nullptr;
         afe_iface_ = nullptr;
         return false;
     }
@@ -141,14 +179,20 @@ void AfeWakeWord::Deinitialize() {
         ESP_LOGW(TAG, "Deinitialize: detection still fetching, proceeding anyway");
     }
 
+    // disable_wakenet 不会等 Core 1 上正在跑的 PIE 卷积。再让一帧结束，
+    // 避免 destroy 释放 tensor 时 atrous_conv1d Load access fault。
+    vTaskDelay(pdMS_TO_TICKS(20));
+
     std::lock_guard<std::mutex> lock(afe_mutex_);
     if (afe_data_ == nullptr || afe_iface_ == nullptr) {
         return;
     }
 
+    afe_iface_->reset_buffer(afe_data_);
     ESP_LOGI(TAG, "Destroying wake word AFE (stops internal AFE tasks)");
     afe_iface_->destroy(afe_data_);
     afe_data_ = nullptr;
+    afe_iface_ = nullptr;
 }
 
 void AfeWakeWord::OnWakeWordDetected(std::function<void(const std::string& wake_word)> callback) {

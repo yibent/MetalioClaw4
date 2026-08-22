@@ -210,10 +210,18 @@ void BuildGeneralPanel() {
 void OnWakeSwitchChanged(lv_event_t* event) {
     auto* control = static_cast<lv_obj_t*>(lv_event_get_target(event));
     const bool enabled = lv_obj_has_state(control, LV_STATE_CHECKED);
-    Application::GetInstance().GetAudioService().EnableWakeWordDetection(enabled);
     // A tiny synchronous NVS write preserves toggle ordering.
     Settings settings(std::string(ai_provider_config::kNamespace), true);
     settings.SetInt("wake", enabled ? 1 : 0);
+    // 设置页不在语音会话内。直接 Enable 会在 delayed destroy 期间把 AFE
+    // 拉起来，Core 1 卷积与 destroy 竞态后 Load access fault。
+    Application::GetInstance().Schedule([enabled]() {
+        auto& app = Application::GetInstance();
+        if (!app.IsVoiceUiDesired()) {
+            return;
+        }
+        app.GetAudioService().EnableWakeWordDetection(enabled);
+    });
 }
 
 struct HermesTaskResult {
