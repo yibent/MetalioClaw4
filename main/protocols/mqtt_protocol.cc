@@ -195,17 +195,33 @@ void MqttProtocol::CloseAudioChannel() {
     }
 }
 
+void MqttProtocol::CancelOpenAudioChannel() {
+    if (event_group_handle_ != nullptr) {
+        xEventGroupSetBits(event_group_handle_, MQTT_PROTOCOL_CANCEL_OPEN_EVENT);
+    }
+}
+
 bool MqttProtocol::OpenAudioChannel() {
+    if (Application::GetInstance().IsVoiceSessionAborted()) {
+        return false;
+    }
     if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
         ESP_LOGI(TAG, "MQTT is not connected, try to connect now");
         if (!StartMqttClient(true)) {
             return false;
         }
     }
+    if (Application::GetInstance().IsVoiceSessionAborted()) {
+        return false;
+    }
 
     error_occurred_ = false;
     session_id_ = "";
     xEventGroupClearBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT);
+    if (Application::GetInstance().IsVoiceSessionAborted()) {
+        return false;
+    }
+    xEventGroupClearBits(event_group_handle_, MQTT_PROTOCOL_CANCEL_OPEN_EVENT);
 
     auto message = GetHelloMessage();
     if (!SendText(message)) {
@@ -213,7 +229,14 @@ bool MqttProtocol::OpenAudioChannel() {
     }
 
     // 等待服务器响应
-    EventBits_t bits = xEventGroupWaitBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(10000));
+    EventBits_t bits = xEventGroupWaitBits(
+        event_group_handle_,
+        MQTT_PROTOCOL_SERVER_HELLO_EVENT | MQTT_PROTOCOL_CANCEL_OPEN_EVENT,
+        pdTRUE, pdFALSE, pdMS_TO_TICKS(10000));
+    if (bits & MQTT_PROTOCOL_CANCEL_OPEN_EVENT) {
+        ESP_LOGI(TAG, "Open audio channel cancelled");
+        return false;
+    }
     if (!(bits & MQTT_PROTOCOL_SERVER_HELLO_EVENT)) {
         ESP_LOGE(TAG, "Failed to receive server hello");
         SetError(Lang::Strings::SERVER_TIMEOUT);

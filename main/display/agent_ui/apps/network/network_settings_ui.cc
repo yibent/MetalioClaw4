@@ -30,36 +30,15 @@ void StyleList(lv_obj_t* list, int min_height) {
 
 }  // namespace
 
-void ShowMode(Handles& handles, int selected) {
-    for (int i = 0; i < 3; ++i) {
-        controls::SetSegmentButtonSelected(handles.mode_buttons[i], i == selected);
-        if (handles.mode_panels[i] == nullptr) continue;
-        if (i == selected) {
-            lv_obj_remove_flag(handles.mode_panels[i], LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(handles.mode_panels[i], LV_OBJ_FLAG_HIDDEN);
-        }
+void ShowMode(Handles& handles, int) {
+    if (handles.mode_panels[0] != nullptr) {
+        lv_obj_remove_flag(handles.mode_panels[0], LV_OBJ_FLAG_HIDDEN);
     }
 }
 
-Handles Build(lv_obj_t* parent, const Model& model,
+Handles Build(lv_obj_t* parent, const Model&,
               const Callbacks& callbacks) {
     Handles handles{};
-    lv_obj_t* modes = controls::CreateSegment(parent, 70);
-    handles.mode_buttons[0] = controls::AddSegmentButton(
-        modes, FONT_AWESOME_WIFI, "Wi-Fi", false, callbacks.mode_selected,
-        reinterpret_cast<void*>(static_cast<intptr_t>(0)));
-    handles.mode_buttons[1] = controls::AddSegmentButton(
-        modes, FONT_AWESOME_SIGNAL, I18n::T("内置卡"), false,
-        callbacks.mode_selected,
-        reinterpret_cast<void*>(static_cast<intptr_t>(1)));
-    handles.mode_buttons[2] = controls::AddSegmentButton(
-        modes, FONT_AWESOME_SD_CARD, I18n::T("外置卡"), false,
-        callbacks.mode_selected,
-        reinterpret_cast<void*>(static_cast<intptr_t>(2)));
-    for (lv_obj_t* button : handles.mode_buttons) {
-        if (button != nullptr) lv_obj_set_user_data(button, callbacks.owner);
-    }
 
     lv_obj_t* wifi = controls::CreateContentPanel(parent, LV_SIZE_CONTENT, 4);
     handles.mode_panels[0] = wifi;
@@ -74,7 +53,8 @@ Handles Build(lv_obj_t* parent, const Model& model,
         wifi, I18n::T("其他网络 · 0"), nullptr);
     handles.nearby_count = nearby_toolbar.title;
 
-    handles.status = controls::AddValueLabel(nearby_toolbar.root, "", 390);
+    handles.status = controls::AddValueLabel(
+        nearby_toolbar.root, "", metrics::Scale(390));
 
     handles.nearby_list = controls::CreateDividerList(wifi, 100);
     lv_obj_set_user_data(handles.nearby_list, callbacks.owner);
@@ -98,25 +78,7 @@ Handles Build(lv_obj_t* parent, const Model& model,
     handles.scan_label = scan.label;
     lv_obj_set_user_data(handles.scan_button, callbacks.owner);
 
-    lv_obj_t* internal = controls::CreateContentPanel(parent, 270);
-    lv_obj_t* external = controls::CreateContentPanel(parent, 270);
-    handles.mode_panels[1] = internal;
-    handles.mode_panels[2] = external;
-    lv_obj_t* internal_card = controls::CreateChoicePanel(
-        internal, FONT_AWESOME_SIGNAL, I18n::T("内置卡"),
-        nullptr, I18n::T("使用内置卡"),
-        callbacks.internal_selected, nullptr,
-        model.cellular && !model.external_slot);
-    lv_obj_t* external_card = controls::CreateChoicePanel(
-        external, FONT_AWESOME_SD_CARD, I18n::T("外置卡"),
-        nullptr, I18n::T("使用外置卡"),
-        callbacks.external_selected, nullptr,
-        model.cellular && model.external_slot);
-    if (internal_card != nullptr) lv_obj_set_user_data(internal_card, callbacks.owner);
-    if (external_card != nullptr) lv_obj_set_user_data(external_card, callbacks.owner);
-
-    ShowMode(handles,
-             model.cellular ? (model.external_slot ? 2 : 1) : 0);
+    ShowMode(handles, 0);
     return handles;
 }
 

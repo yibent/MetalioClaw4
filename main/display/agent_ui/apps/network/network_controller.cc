@@ -86,9 +86,9 @@ void Controller::HandleEvent(const Event& event) {
     ViewState next = state_;
     switch (event.type) {
         case EventType::ModeSnapshot:
-            next.cellular = event.cellular;
-            next.external_slot = event.external_slot;
-            next.selected_mode = event.cellular ? (event.external_slot ? 2 : 1) : 0;
+            next.cellular = false;
+            next.external_slot = false;
+            next.selected_mode = 0;
             break;
         case EventType::SavedNetworks:
             next.saved_networks = event.saved_networks;

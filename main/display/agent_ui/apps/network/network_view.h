@@ -21,10 +21,7 @@ public:
     void LifecycleCallback(Lifecycle lifecycle);
 
 private:
-    static void OnModeSelected(lv_event_t* event);
     static void OnScan(lv_event_t* event);
-    static void OnInternalSelected(lv_event_t* event);
-    static void OnExternalSelected(lv_event_t* event);
     static void OnSavedItem(lv_event_t* event);
     static void OnNearbyItem(lv_event_t* event);
     static void OnPasswordConnect(lv_event_t* event);

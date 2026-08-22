@@ -82,6 +82,7 @@ public:
     bool IsBootReady() const { return boot_ready_; }
 
     void ForceReturnToIdle();
+    bool IsVoiceSessionAborted() const { return abort_voice_session_.load(); }
     void SetLowPowerStandby(bool enabled);
     bool IsLowPowerStandby() const { return low_power_standby_.load(); }
     bool IsCodexVoiceCaptureActive() const { return false; }
@@ -119,6 +120,10 @@ private:
     uint32_t voice_ui_pending_retry_epoch_ = 0;
     // 主页已 desired，但 AFE 尚未 active：下滑聊天先排队，会话起来后再开通道。
     volatile bool pending_voice_ui_listen_ = false;
+    // 下滑已请求开麦（含乐观 Connecting），用于上划在设备仍是 Idle 时也能退出。
+    volatile bool voice_chat_requested_ = false;
+    // 上划退出：打断正在阻塞的 OpenAudioChannel，并丢掉已排队的下滑开麦。
+    std::atomic<bool> abort_voice_session_{false};
 
     void SyncVoiceUiSession();
     void TearDownVoiceAudioPaths(bool release_wake_word);
@@ -132,6 +137,9 @@ private:
     bool TryEnableWakeWordForVoiceUi();
     void StartVoiceChatFromIdle();
     void FlushPendingVoiceUiListen();
+    void CancelVoiceSession();
+    void EndVoiceSessionToIdle();
+    bool OpenVoiceChannelOrIdle();
 
     bool has_server_time_ = false;
     bool aborted_ = false;

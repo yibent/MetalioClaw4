@@ -13,8 +13,6 @@
 #include "board.h"
 #include "fonts.h"
 #include "theme.h"
-#include "dual_network_board.h"
-#include "settings.h"
 #include "status_signal_assets.h"
 
 namespace agent_ui {
@@ -221,12 +219,7 @@ void StatusBar::Create() {
 }
 
 NetworkMode StatusBar::ReadNetworkMode() const {
-    const NetworkType type = DualNetworkBoard::LoadNetworkTypeFromSettings(1);
-    if (type == NetworkType::WIFI) return NetworkMode::Wifi;
-
-    Settings settings("network", true);
-    return settings.GetInt("sim_slot", 0) == 1 ? NetworkMode::InternalSim
-                                                : NetworkMode::ExternalSim;
+    return NetworkMode::Wifi;
 }
 
 void StatusBar::Refresh(bool force) {

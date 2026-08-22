@@ -36,10 +36,7 @@ void View::BuildInto(lv_obj_t* parent, IntentSink intent_sink) {
         },
         network_settings_ui::Callbacks{
             .owner = this,
-            .mode_selected = OnModeSelected,
             .scan = OnScan,
-            .internal_selected = OnInternalSelected,
-            .external_selected = OnExternalSelected,
         });
     state_.mounted = true;
     Render(state_);
@@ -151,28 +148,8 @@ void View::LifecycleCallback(Lifecycle lifecycle) {
     if (lifecycle == Lifecycle::Unload) Reset();
 }
 
-void View::OnModeSelected(lv_event_t* event) {
-    View* self = OwnerFromEvent(event);
-    if (self == nullptr) return;
-    const int mode = static_cast<int>(reinterpret_cast<intptr_t>(
-        lv_event_get_user_data(event)));
-    self->Emit(Intent::SelectMode(mode));
-}
-
 void View::OnScan(lv_event_t* event) {
     if (View* self = OwnerFromEvent(event)) self->Emit(Intent::Scan());
-}
-
-void View::OnInternalSelected(lv_event_t* event) {
-    if (View* self = OwnerFromEvent(event)) {
-        self->Emit(Intent::SelectSimSlot(1));
-    }
-}
-
-void View::OnExternalSelected(lv_event_t* event) {
-    if (View* self = OwnerFromEvent(event)) {
-        self->Emit(Intent::SelectSimSlot(0));
-    }
 }
 
 void View::OnSavedItem(lv_event_t* event) {

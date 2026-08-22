@@ -30,16 +30,19 @@ void Controller::HandleIntent(const Intent& intent) {
         return;
     }
 
-    const bool started_connecting = state_.agent_state == AgentState::Idle;
-    if (started_connecting) {
-        state_.agent_state = AgentState::Connecting;
+    const bool exiting = state_.agent_state != AgentState::Idle;
+    if (exiting) {
+        state_.agent_state = AgentState::Idle;
         PublishState();
+        command_sink_({.type = CommandType::ToggleListening, .target = ScreenId::Home});
+        return;
     }
+
+    state_.agent_state = AgentState::Connecting;
+    PublishState();
     if (!command_sink_({.type = CommandType::ToggleListening, .target = ScreenId::Home})) {
-        if (started_connecting) {
-            state_.agent_state = AgentState::Idle;
-            PublishState();
-        }
+        state_.agent_state = AgentState::Idle;
+        PublishState();
     }
 }
 

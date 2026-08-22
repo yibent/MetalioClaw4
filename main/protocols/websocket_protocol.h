@@ -9,6 +9,7 @@
 #include <freertos/event_groups.h>
 
 #define WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT (1 << 0)
+#define WEBSOCKET_PROTOCOL_CANCEL_OPEN_EVENT (1 << 1)
 
 class WebsocketProtocol : public Protocol {
 public:
@@ -20,6 +21,7 @@ public:
     bool OpenAudioChannel() override;
     void CloseAudioChannel() override;
     bool IsAudioChannelOpened() const override;
+    void CancelOpenAudioChannel() override;
 
 private:
     EventGroupHandle_t event_group_handle_;

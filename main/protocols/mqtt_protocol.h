@@ -20,6 +20,7 @@
 #define MQTT_RECONNECT_INTERVAL_MS 60000
 
 #define MQTT_PROTOCOL_SERVER_HELLO_EVENT (1 << 0)
+#define MQTT_PROTOCOL_CANCEL_OPEN_EVENT (1 << 1)
 
 class MqttProtocol : public Protocol {
 public:
@@ -31,6 +32,7 @@ public:
     bool OpenAudioChannel() override;
     void CloseAudioChannel() override;
     bool IsAudioChannelOpened() const override;
+    void CancelOpenAudioChannel() override;
 
 private:
     EventGroupHandle_t event_group_handle_;
