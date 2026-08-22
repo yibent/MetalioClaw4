@@ -8,6 +8,7 @@
 #include "assets/lang_config.h"
 #include "mcp_server.h"
 #include "assets.h"
+#include "ai_provider_config.h"
 #include "settings.h"
 #include "lua_audio_backend.h"
 #include "lua_board_backend.h"
@@ -880,12 +881,12 @@ void Application::SetDeviceState(DeviceState state) {
             display->SetStatus(Lang::Strings::STANDBY);
             display->SetEmotion("neutral");
             audio_service_.EnableVoiceProcessing(false);
-            // 唤醒词仅在主页语音会话内开启；离开主页必须 Release 掉 AFE。
+            // 离开主页只软停。Idle 里硬 destroy 会在回设置/主页时重建 AFE，
+            // ESP32-P4 上 INTERNAL 回落到 LP SRAM，PIE 卷积 Store access fault。
             if (voice_ui_active_) {
                 audio_service_.EnableWakeWordDetection(true);
             } else {
                 audio_service_.EnableWakeWordDetection(false);
-                audio_service_.ReleaseWakeWordEngine();
             }
             break;
         case kDeviceStateConnecting:
@@ -1143,21 +1144,47 @@ void Application::ScheduleVoiceUiStartRetry(uint32_t epoch) {
     esp_timer_start_once(voice_ui_start_retry_timer_, 200 * 1000);
 }
 
+bool Application::HeapOkForWakeWordCreate() const {
+    // ESP32-P4 PIE 卷积只能安全访问 HP SRAM / PSRAM。MALLOC_CAP_INTERNAL 含
+    // LP SRAM（约 32KB @ 0x50108000），总空闲够用时仍可能把 scratch 分到 LP，
+    // 随后 dl_esp32p4_sr_atrous_conv1d 触发 Load access fault。
+    const size_t free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA);
+    const size_t largest_dma =
+        heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
+    const size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    constexpr size_t kMinFreeDma = 48 * 1024;
+    constexpr size_t kMinLargestDma = 16 * 1024;
+    constexpr size_t kMinPsram = 256 * 1024;
+    if (free_dma < kMinFreeDma || largest_dma < kMinLargestDma ||
+        free_psram < kMinPsram) {
+        ESP_LOGW(TAG,
+                 "Defer wake word init (dma_free=%uKB dma_largest=%uKB psram=%uKB)",
+                 (unsigned)(free_dma / 1024), (unsigned)(largest_dma / 1024),
+                 (unsigned)(free_psram / 1024));
+        return false;
+    }
+    return true;
+}
+
 bool Application::TryEnableWakeWordForVoiceUi() {
+    Settings wake_pref(std::string(ai_provider_config::kNamespace), false);
+    if (wake_pref.GetInt("wake", 1) == 0) {
+        audio_service_.EnableWakeWordDetection(false);
+        return true;
+    }
+
     if (audio_service_.IsWakeWordEngineReady()) {
         audio_service_.EnableWakeWordDetection(true);
         return audio_service_.IsWakeWordEngineReady();
     }
 
-    const size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    const size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    // WakeNet AFE 创建失败时可能返回非空坏句柄并在卷积中 Load fault；堆过低则推迟。
-    constexpr size_t kMinInternal = 48 * 1024;
-    constexpr size_t kMinPsram = 256 * 1024;
-    if (free_internal < kMinInternal || free_psram < kMinPsram) {
-        ESP_LOGW(TAG,
-                 "Defer wake word init (internal=%uKB psram=%uKB)",
-                 (unsigned)(free_internal / 1024), (unsigned)(free_psram / 1024));
+    if (voice_ui_engine_not_before_us_ != 0 &&
+        esp_timer_get_time() < voice_ui_engine_not_before_us_) {
+        ESP_LOGD(TAG, "Defer wake word init until outgoing UI is released");
+        return false;
+    }
+
+    if (!HeapOkForWakeWordCreate()) {
         return false;
     }
 
@@ -1167,6 +1194,21 @@ bool Application::TryEnableWakeWordForVoiceUi() {
         return false;
     }
     return true;
+}
+
+void Application::NotifyUiTransitionFinished() {
+    voice_ui_engine_not_before_us_ = 0;
+    if (!voice_ui_desired_) {
+        return;
+    }
+    Schedule([this]() { SyncVoiceUiSession(); });
+}
+
+void Application::RequestVoiceEngineHardRelease() {
+    if (voice_ui_desired_) {
+        return;
+    }
+    ScheduleVoiceUiHardRelease(voice_ui_epoch_);
 }
 
 void Application::SetVoiceUiDesired(bool desired) {
@@ -1180,19 +1222,24 @@ void Application::SetVoiceUiDesired(bool desired) {
     ESP_LOGI(TAG, "voice UI desired -> %d (epoch=%" PRIu32 ")", desired ? 1 : 0, epoch);
 
     if (!desired) {
-        // 立刻软停（降 CPU），硬 destroy 延后；若很快再进页则取消 destroy。
+        // 立刻软停。设置等轻量页不硬 destroy，回主页复用同一份 AFE。
         pending_voice_ui_listen_ = false;
         voice_ui_active_ = false;
+        voice_ui_engine_not_before_us_ = 0;
         SoftStopVoiceAudioPaths();
         if (voice_ui_start_retry_timer_ != nullptr) {
             esp_timer_stop(voice_ui_start_retry_timer_);
         }
-        ScheduleVoiceUiHardRelease(epoch);
         Schedule([this]() { SyncVoiceUiSession(); });
         return;
     }
 
     CancelVoiceUiHardRelease();
+    if (!audio_service_.IsWakeWordEngineReady()) {
+        // 仅在引擎已被硬释放后重建。等旧屏 delete，避免双屏峰值抢 HP SRAM。
+        constexpr int64_t kUiReleaseFallbackUs = 400 * 1000;
+        voice_ui_engine_not_before_us_ = esp_timer_get_time() + kUiReleaseFallbackUs;
+    }
     Schedule([this]() { SyncVoiceUiSession(); });
 }
 

@@ -67,11 +67,15 @@ public:
     AudioService& GetAudioService() { return audio_service_; }
 
     // 语音 UI 会话（主页）：唤醒词仅在会话内开启。
-    // desired=false：立刻软停（停 Feed / disable_wakenet），延迟硬 destroy AFE，
-    // 以便快速再回主页时复用引擎，避免低内存下重建崩溃。
+    // desired=false：立刻软停（停 Feed / disable_wakenet）。设置等轻量页
+    // 不硬 destroy，避免回主页重建时卷积缓冲落到 LP SRAM。
     void SetVoiceUiDesired(bool desired);
     bool IsVoiceUiActive() const { return voice_ui_active_; }
     bool IsVoiceUiDesired() const { return voice_ui_desired_; }
+    // 旧屏 LVGL 对象已删除后再重建 WakeNet（仅硬释放后的路径）。
+    void NotifyUiTransitionFinished();
+    // 相机 / 文件等吃内存的页面：软停之后再销毁 AFE。
+    void RequestVoiceEngineHardRelease();
 
     bool HasPendingActivation() const {
         return !pending_activation_code_.empty();
@@ -124,8 +128,11 @@ private:
     volatile bool voice_chat_requested_ = false;
     // 上划退出：打断正在阻塞的 OpenAudioChannel，并丢掉已排队的下滑开麦。
     std::atomic<bool> abort_voice_session_{false};
+    // 非 0：在此时间之前禁止 create_from_config（等旧屏释放）。
+    int64_t voice_ui_engine_not_before_us_ = 0;
 
     void SyncVoiceUiSession();
+    bool HeapOkForWakeWordCreate() const;
     void TearDownVoiceAudioPaths(bool release_wake_word);
     void SoftStopVoiceAudioPaths();
     void ParkVoiceUiProtocol();

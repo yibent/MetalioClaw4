@@ -5,6 +5,23 @@
 #include "theme.h"
 
 namespace agent_ui {
+namespace {
+
+bool ScreenNeedsVoiceEngineRelease(ScreenId id) {
+    switch (id) {
+        case ScreenId::OpenClaw:
+        case ScreenId::AiImageGen:
+        case ScreenId::Translate:
+        case ScreenId::Files:
+        case ScreenId::ExternalAppHost:
+        case ScreenId::Standby:
+            return true;
+        default:
+            return false;
+    }
+}
+
+}  // namespace
 
 Navigation& Navigation::Get() {
     static Navigation instance;
@@ -68,7 +85,25 @@ void Navigation::Load(ScreenId id, TransitionDirection direction, bool update_st
         }
     }
     current_ = id;
+    lv_obj_t* previous = lv_screen_active();
     Application::GetInstance().SetVoiceUiDesired(id == ScreenId::Home);
+    // 设置等轻量页只软停唤醒词。相机 / 文件 / 翻译会再申请硬释放 AFE。
+    if (id != ScreenId::Home && ScreenNeedsVoiceEngineRelease(id)) {
+        Application::GetInstance().RequestVoiceEngineHardRelease();
+    }
+    // 回主页时等旧屏真正 delete 后再重建 AFE（仅硬释放后的路径）。
+    if (id == ScreenId::Home && previous != nullptr && previous != root) {
+        lv_obj_add_event_cb(
+            previous,
+            [](lv_event_t*) {
+                lv_async_call(
+                    [](void*) {
+                        Application::GetInstance().NotifyUiTransitionFinished();
+                    },
+                    nullptr);
+            },
+            LV_EVENT_DELETE, nullptr);
+    }
     StatusBar::Get().SetHomeActive(id == ScreenId::Home);
     const bool show_status_bar = id != ScreenId::OpenClaw &&
                                  id != ScreenId::AiImageGen &&
