@@ -537,10 +537,19 @@ enum class Str : uint16_t {
     TRANSLATE_AUDIO_BUSY = 518,
     TRANSLATE_START_FAILED = 519,
     WIFI_NOT_CONNECTED_TITLE = 520,
-    WIFI_NOT_CONNECTED_HINT = 521
+    WIFI_NOT_CONNECTED_HINT = 521,
+    LUA_AGENT = 522,
+    LUA_AGENT_CONNECTING = 523,
+    LUA_AGENT_WAITING = 524,
+    LUA_AGENT_RUNNING = 525,
+    LUA_AGENT_RECONNECTING = 526,
+    LUA_AGENT_ERROR = 527,
+    LUA_AGENT_LAST_RESULT = 528,
+    LUA_AGENT_OUTPUT = 529,
+    LUA_AGENT_HINT = 530
 };
 
-constexpr size_t kStringCount = 522;
+constexpr size_t kStringCount = 531;
 
 struct LocaleInfo {
     Locale id;
@@ -1078,6 +1087,15 @@ inline constexpr const char* kMsgIds[kStringCount] = {
     "启动失败",
     "未连接 WiFi",
     "请先连接 WiFi 后再使用该应用",
+    "远程脚本",
+    "正在连接服务器",
+    "已连接，等待任务",
+    "正在运行脚本",
+    "连接断开，正在重连",
+    "连接失败",
+    "最近返回值",
+    "脚本输出",
+    "打开后自动连接，等待服务端下发 Lua 脚本",
 };
 
 inline constexpr const char* kStringsZhCN[kStringCount] = {
@@ -1603,6 +1621,15 @@ inline constexpr const char* kStringsZhCN[kStringCount] = {
     "启动失败",
     "未连接 WiFi",
     "请先连接 WiFi 后再使用该应用",
+    "远程脚本",
+    "正在连接服务器",
+    "已连接，等待任务",
+    "正在运行脚本",
+    "连接断开，正在重连",
+    "连接失败",
+    "最近返回值",
+    "脚本输出",
+    "打开后自动连接，等待服务端下发 Lua 脚本",
 };
 
 inline constexpr const char* kStringsEnUS[kStringCount] = {
@@ -2128,6 +2155,15 @@ inline constexpr const char* kStringsEnUS[kStringCount] = {
     "Failed to start",
     "WiFi Not Connected",
     "Connect to WiFi before using this app",
+    "Lua Agent",
+    "Connecting to server",
+    "Connected, waiting for work",
+    "Running script",
+    "Disconnected, reconnecting",
+    "Connection failed",
+    "Last result",
+    "Script output",
+    "Connects automatically and waits for Lua scripts",
 };
 
 inline constexpr const char* const* kLocaleTables[kLocaleCount] = {
