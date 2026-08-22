@@ -2590,6 +2590,11 @@
       "en-US": "Last result"
     },
     {
+      "key": "LUA_AGENT_DONE",
+      "zh-CN": "Lua 执行完成",
+      "en-US": "Lua finished"
+    },
+    {
       "key": "LUA_AGENT_OUTPUT",
       "zh-CN": "脚本输出",
       "en-US": "Script output"

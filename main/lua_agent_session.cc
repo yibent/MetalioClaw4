@@ -456,15 +456,15 @@ void FinishJobIfDone() {
     SendJobResult(s_current_req_id, info.state, output.get(), info.output_truncated, result.get(),
                   info.result_truncated, duration_ms);
     SetJobFields(s_current_req_id, result[0] ? result.get() : "null", output.get());
-    if (output[0]) {
+    if (info.state == LUA_RUNTIME_JOB_DONE) {
+        PostChat(I18n::T("Lua 执行完成"));
+    } else if (output[0]) {
         PostChat(Truncate(output.get(), 400).c_str());
-    } else if (result[0] && strcmp(result.get(), "null") != 0) {
-        PostChat(Truncate(result.get(), 400).c_str());
     } else if (info.state == LUA_RUNTIME_JOB_TIMEOUT) {
         PostChat(I18n::T("脚本超时"));
     } else if (info.state == LUA_RUNTIME_JOB_STOPPED) {
         PostChat(I18n::T("脚本已取消"));
-    } else if (info.state != LUA_RUNTIME_JOB_DONE) {
+    } else {
         PostChat(I18n::T("脚本运行失败"));
     }
     s_job_active.store(false, std::memory_order_release);

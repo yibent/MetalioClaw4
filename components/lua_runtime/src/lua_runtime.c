@@ -365,6 +365,27 @@ static int luaopen_runtime(lua_State *state) {
     return 1;
 }
 
+static int l_speech_removed(lua_State *state) {
+    return luaL_error(state,
+                      "require(\"speech\") was removed. Use require(\"alert\") and alert.show "
+                      "for on-screen alerts. TTS is the workflow speech node (WebSocket speak), "
+                      "not a Lua module.");
+}
+
+static void preload_removed_speech(lua_State *state) {
+    lua_getglobal(state, "package");
+    if (!lua_istable(state, -1)) {
+        lua_pop(state, 1);
+        return;
+    }
+    lua_getfield(state, -1, "preload");
+    if (lua_istable(state, -1)) {
+        lua_pushcfunction(state, l_speech_removed);
+        lua_setfield(state, -2, "speech");
+    }
+    lua_pop(state, 2);
+}
+
 static int luaopen_audio(lua_State *state) {
     if (luaL_newmetatable(state, LUA_RUNTIME_AUDIO_CONTEXT)) {
         lua_pushcfunction(state, close_audio_context);
@@ -401,6 +422,7 @@ static void open_modules(lua_State *state) {
     lua_pop(state, 1);
     luaL_requiref(state, "device", luaopen_device, 1);
     lua_pop(state, 1);
+    preload_removed_speech(state);
     for (size_t i = 0; i < s_module_count; ++i) {
         luaL_requiref(state, s_modules[i].name, s_modules[i].open_fn, 1);
         lua_pop(state, 1);
