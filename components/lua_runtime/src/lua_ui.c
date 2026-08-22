@@ -64,6 +64,8 @@ struct ui_context {
 
 static const char kContextRegistryKey;
 static ui_context_t* s_screen_owner;
+static bool s_exclusive_input;
+static bool s_top_layer_was_hidden;
 static lv_fs_drv_t s_native_fs_driver;
 static bool s_native_fs_registered;
 static lua_runtime_ui_lock_callback_t s_ui_lock;
@@ -263,11 +265,58 @@ static void object_event_callback(lv_event_t* event) {
 
 static void add_touch_events(lv_obj_t* object, ui_object_t* entry) {
     lv_obj_add_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(object, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_remove_flag(object, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_PRESSED, entry);
     lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_PRESSING, entry);
     lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_PRESS_LOST, entry);
     lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_RELEASED, entry);
     lv_obj_add_event_cb(object, object_event_callback, LV_EVENT_CLICKED, entry);
+}
+
+static void apply_pointer_policy(lv_obj_t* object, ui_object_t* entry, const char* event_id) {
+    if (event_id && event_id[0] != '\0') {
+        add_touch_events(object, entry);
+        return;
+    }
+    /* Decorative widgets must not eat hits; otherwise a dino/cactus/label
+     * swallows the tap and ui.poll_event never sees it. */
+    lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICK_FOCUSABLE);
+}
+
+static void reset_pointer_devices(void) {
+    lv_indev_t* indev = lv_indev_get_next(NULL);
+    while (indev) {
+        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+            lv_indev_wait_release(indev);
+            lv_indev_reset(indev, NULL);
+        }
+        indev = lv_indev_get_next(indev);
+    }
+}
+
+static void begin_exclusive_input(void) {
+    lv_obj_t* top = lv_layer_top();
+    if (!s_exclusive_input && top) {
+        s_top_layer_was_hidden = lv_obj_has_flag(top, LV_OBJ_FLAG_HIDDEN);
+        /* Home keeps a full-screen conversation hit target on the top layer.
+         * Hide the whole overlay so those widgets cannot steal Lua touches,
+         * even if conversation mode re-enables them while the script runs. */
+        lv_obj_add_flag(top, LV_OBJ_FLAG_HIDDEN);
+    }
+    reset_pointer_devices();
+    s_exclusive_input = true;
+}
+
+static void end_exclusive_input(void) {
+    if (!s_exclusive_input)
+        return;
+    lv_obj_t* top = lv_layer_top();
+    if (top && !s_top_layer_was_hidden)
+        lv_obj_remove_flag(top, LV_OBJ_FLAG_HIDDEN);
+    reset_pointer_devices();
+    s_exclusive_input = false;
 }
 
 static void apply_geometry(lv_obj_t* object, int x, int y, int width, int height) {
@@ -326,6 +375,7 @@ static int l_screen(lua_State* state) {
         return luaL_error(state, "screen allocation failed");
     }
     lv_obj_remove_flag(context->screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(context->screen, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_set_style_bg_color(context->screen, lv_color_hex(background), 0);
     ui_object_t* entry = add_object(context, context->screen, UI_OBJECT_SCREEN, "screen");
     if (entry) {
@@ -353,6 +403,7 @@ static int l_load(lua_State* state) {
         return luaL_error(state, "display lock failed");
     context->previous_screen = lv_screen_active();
     lv_screen_load(screen);
+    begin_exclusive_input();
     ui_unlock();
     return 0;
 }
@@ -382,9 +433,7 @@ static int l_rect(lua_State* state) {
         ui_unlock();
         return luaL_error(state, "ui object limit reached");
     }
-    if (event_id) {
-        add_touch_events(object, entry);
-    }
+    apply_pointer_policy(object, entry, event_id);
     ui_unlock();
     lua_pushinteger(state, entry->id);
     return 1;
@@ -417,8 +466,7 @@ static int l_circle(lua_State* state) {
         ui_unlock();
         return luaL_error(state, "ui object limit reached");
     }
-    if (event_id)
-        add_touch_events(object, entry);
+    apply_pointer_policy(object, entry, event_id);
     ui_unlock();
     lua_pushinteger(state, entry->id);
     return 1;
@@ -493,8 +541,7 @@ static int l_line(lua_State* state) {
         return luaL_error(state, "ui object limit reached");
     }
     entry->owned_data = points;
-    if (event_id)
-        add_touch_events(object, entry);
+    apply_pointer_policy(object, entry, event_id);
     ui_unlock();
     lua_pushinteger(state, entry->id);
     return 1;
@@ -528,10 +575,7 @@ static int l_arc(lua_State* state) {
         ui_unlock();
         return luaL_error(state, "ui object limit reached");
     }
-    if (event_id)
-        add_touch_events(object, entry);
-    else
-        lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    apply_pointer_policy(object, entry, event_id);
     ui_unlock();
     lua_pushinteger(state, entry->id);
     return 1;
@@ -593,8 +637,7 @@ static int l_image(lua_State* state) {
         return luaL_error(state, "ui object limit reached");
     }
     entry->owned_data = owned;
-    if (event_id)
-        add_touch_events(object, entry);
+    apply_pointer_policy(object, entry, event_id);
     ui_unlock();
     lua_pushinteger(state, entry->id);
     return 1;
@@ -617,6 +660,8 @@ static int l_label(lua_State* state) {
     if (width != LV_SIZE_CONTENT)
         lv_obj_set_width(object, width);
     lv_obj_set_style_text_color(object, lv_color_hex(color), 0);
+    lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICK_FOCUSABLE);
     ui_object_t* entry = add_object(context, object, UI_OBJECT_LABEL, NULL);
     if (!entry) {
         lv_obj_delete(object);
@@ -657,6 +702,7 @@ static int l_button(lua_State* state) {
     lv_obj_t* label = lv_label_create(button);
     lv_label_set_text(label, text);
     lv_obj_set_style_text_color(label, lv_color_hex(text_color), 0);
+    lv_obj_remove_flag(label, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_center(label);
     ui_unlock();
     lua_pushinteger(state, entry->id);
@@ -1069,6 +1115,7 @@ static int close_context(lua_State* state) {
         }
         if (s_screen_owner == context)
             s_screen_owner = NULL;
+        end_exclusive_input();
         ui_unlock();
     }
     if (context->events)
