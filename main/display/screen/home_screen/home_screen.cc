@@ -28,6 +28,7 @@
 #include "chat_screen/chat_screen.h"
 #include "game_2048_screen/game_2048_screen.h"
 #include "lua_dinosaur_screen/lua_dinosaur_screen.h"
+#include "lua_agent_screen/lua_agent_screen.h"
 #include "openclaw_screen/openclaw_screen.h"
 #include "ai_image_gen_screen/ai_image_gen_screen.h"
 #include "translate_screen/translate_screen.h"
@@ -83,6 +84,16 @@ void lua_dinosaur_lifecycle_cb(screen_lifecycle_event_t event) {
     } else {
         ESP_LOGI(TAG_HOME, "unload: lua_dinosaur");
     }
+}
+
+void lua_agent_lifecycle_cb(screen_lifecycle_event_t event) {
+    PwrKey_OnScreenLifecycle("lua_agent", event);
+    if (event == SCREEN_LIFECYCLE_LOAD) {
+        ESP_LOGI(TAG_HOME, "load: lua_agent");
+    } else {
+        ESP_LOGI(TAG_HOME, "unload: lua_agent");
+    }
+    LuaAgentApp::LifecycleCallback(event);
 }
 
 void calculator_lifecycle_cb(screen_lifecycle_event_t event) {
@@ -338,6 +349,10 @@ void LaunchLuaDinosaur(screen_lifecycle_cb_t lifecycle_cb) {
     LuaDinosaurApp::Launch(lifecycle_cb);
 }
 
+void LaunchLuaAgent(screen_lifecycle_cb_t lifecycle_cb) {
+    LuaAgentApp::Launch(lifecycle_cb);
+}
+
 void LaunchCalculator(screen_lifecycle_cb_t lifecycle_cb) {
     lv_obj_t* old_scr = lv_screen_active();
     lv_obj_t* app = Calculator::Create();
@@ -505,6 +520,7 @@ constexpr AppEntry kApps[] = {
     {"wifi",           "网络配置", LaunchWifi,          wifi_lifecycle_cb,          false},
     {"calendar",       "日历",     LaunchCalendar,      calendar_lifecycle_cb,      false},
     {"openclaw",       "OpenClaw", LaunchOpenClaw,      openclaw_lifecycle_cb,      true},
+    {"lua_agent",      "远程脚本", LaunchLuaAgent,      lua_agent_lifecycle_cb,     true},
     {"camera",         "相机",     LaunchCamera,        camera_lifecycle_cb,        false},
     {"calculator",     "计算器",   LaunchCalculator,    calculator_lifecycle_cb,    false},
     {"weather",        "天气",     LaunchWeather,       weather_lifecycle_cb,       true},

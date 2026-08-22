@@ -15,10 +15,12 @@ LuaSelfTest: CASE_SKIP name=uart_loopback ...
 LuaSelfTest: ===== unattended Lua self-test PASS: failed=0 skipped=1 ... =====
 ```
 
-The suite covers the public `runtime`, `ui`, and `audio` Lua modules, JSON
-arguments, standard Lua libraries, timeout/cancellation, job output
+The suite covers the public `runtime`, `ui`, `audio`, `http`, `camera`, `speech`, and `device` Lua modules,
+JSON arguments, calling a `main` entry function and encoding its return value
+as JSON, standard Lua libraries, timeout/cancellation, job output
 truncation, UI object creation/update/delete, synthetic touch queue events,
-and the UART capability/policy gates. It also runs virtual app scenarios named
+the UART capability/policy gates, and the HTTP capability/argument gates.
+Live HTTP I/O is not part of the unattended suite. It also runs virtual app scenarios named
 `virtual_lifecycle`, `virtual_lifecycle_reenter`, `virtual_frame_loop`,
 `virtual_invalid_order`, `virtual_crash_cleanup`, `virtual_cleanup_probe`,
 `virtual_audio_race`, and `virtual_ui_contention`. These cover page

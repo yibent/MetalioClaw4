@@ -2,6 +2,9 @@
 set(SOURCES "audio/audio_codec.cc"
             "audio/audio_service.cc"
             "lua_audio_backend.cc"
+            "lua_http_backend.cc"
+            "lua_camera_backend.cc"
+            "lua_board_backend.cc"
             "lua_self_test.cc"
             "audio/codecs/no_audio_codec.cc"
             "audio/codecs/box_audio_codec.cc"
@@ -33,6 +36,7 @@ set(SOURCES "audio/audio_codec.cc"
             "display/screen/standby_screen/standby_screen.cc"
             "display/screen/game_2048_screen/game_2048_screen.cc"
             "display/screen/lua_dinosaur_screen/lua_dinosaur_screen.cc"
+            "display/screen/lua_agent_screen/lua_agent_screen.cc"
             "display/screen/calculator_screen/calculator_screen.cc"
             "display/screen/calendar_screen/calendar_screen.cc"
             "display/screen/weather_screen/weather_screen.cc"
@@ -89,7 +93,7 @@ set(SOURCES "audio/audio_codec.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "i18n" "display" "display/font" "display/lvgl_display" "display/lvgl_display/jpg" "display/screen" "display/screen/boot_screen" "display/screen/ota_screen" "display/screen/home_screen" "display/screen/game_2048_screen" "display/screen/lua_dinosaur_screen" "display/screen/calculator_screen" "display/screen/calendar_screen" "display/screen/weather_screen" "display/screen/camera_screen" "display/screen/backlight_screen" "display/screen/settings_screen" "display/screen/bluetooth_screen" "display/screen/chat_screen" "display/screen/network_screen" "display/screen/sd_card_screen" "display/screen/pin_test_screen" "display/screen/test_screen" "display/screen/openclaw_screen" "display/screen/ai_image_gen_screen" "display/screen/translate_screen" "display/screen/info_screen" "display/screen/standby_screen" "audio" "protocols")
+set(INCLUDE_DIRS "." "i18n" "display" "display/font" "display/lvgl_display" "display/lvgl_display/jpg" "display/screen" "display/screen/boot_screen" "display/screen/ota_screen" "display/screen/home_screen" "display/screen/game_2048_screen" "display/screen/lua_dinosaur_screen" "display/screen/lua_agent_screen" "display/screen/calculator_screen" "display/screen/calendar_screen" "display/screen/weather_screen" "display/screen/camera_screen" "display/screen/backlight_screen" "display/screen/settings_screen" "display/screen/bluetooth_screen" "display/screen/chat_screen" "display/screen/network_screen" "display/screen/sd_card_screen" "display/screen/pin_test_screen" "display/screen/test_screen" "display/screen/openclaw_screen" "display/screen/ai_image_gen_screen" "display/screen/translate_screen" "display/screen/info_screen" "display/screen/standby_screen" "audio" "protocols")
 
 # Add board common files
 file(GLOB BOARD_COMMON_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/boards/common/*.cc)

@@ -26,6 +26,14 @@ config LUA_SELF_TEST_STRESS_ROUNDS
         virtual app scenarios. Twenty rounds take roughly 60-120 seconds depending
         on the board and audio backend. Larger values scale job timeouts too.
 
+config LUA_AGENT_WS_URL
+    string "Lua Agent WebSocket URL"
+    default ""
+    help
+        Full ws:// or wss:// URL for the Lua Agent app. Empty uses the host in
+        api_endpoints.h plus /api/device-ws/v1. NVS namespace lua_agent key
+        url overrides this at runtime.
+
 choice
     prompt "Flash Assets"
     default FLASH_DEFAULT_ASSETS

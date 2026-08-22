@@ -1,5 +1,6 @@
 #include "lua_runtime.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +23,8 @@
 #define LUA_RUNTIME_MAX_CODE (64 * 1024)
 #define LUA_RUNTIME_DEFAULT_STACK (12 * 1024)
 #define LUA_RUNTIME_DEFAULT_PRIORITY 4
-#define LUA_RUNTIME_OUTPUT_SIZE (4 * 1024)
+#define LUA_RUNTIME_RESULT_MAX_DEPTH 16
+#define LUA_RUNTIME_RESULT_MAX_KEYS 256
 #define LUA_RUNTIME_AUDIO_HANDLES 16
 #define LUA_RUNTIME_AUDIO_CONTEXT "metalio.lua.audio.context"
 
@@ -34,9 +36,13 @@ typedef struct {
     char *code;
     char *path;
     char *args_json;
+    char *entry;
     char *output;
     size_t output_length;
     bool output_truncated;
+    char *result;
+    size_t result_length;
+    bool result_truncated;
     uint32_t timeout_ms;
     uint32_t capabilities;
     volatile bool stop_requested;
@@ -72,7 +78,9 @@ static void free_job(runtime_job_t *job) {
     free(job->code);
     free(job->path);
     free(job->args_json);
+    free(job->entry);
     free(job->output);
+    free(job->result);
     memset(job, 0, sizeof(*job));
 }
 
@@ -343,6 +351,14 @@ static void open_modules(lua_State *state) {
     lua_pop(state, 1);
     luaL_requiref(state, "uart", luaopen_uart, 1);
     lua_pop(state, 1);
+    luaL_requiref(state, "http", luaopen_http, 1);
+    lua_pop(state, 1);
+    luaL_requiref(state, "camera", luaopen_camera, 1);
+    lua_pop(state, 1);
+    luaL_requiref(state, "speech", luaopen_speech, 1);
+    lua_pop(state, 1);
+    luaL_requiref(state, "device", luaopen_device, 1);
+    lua_pop(state, 1);
     for (size_t i = 0; i < s_module_count; ++i) {
         luaL_requiref(state, s_modules[i].name, s_modules[i].open_fn, 1);
         lua_pop(state, 1);
@@ -414,6 +430,167 @@ static esp_err_t set_args(lua_State *state, const char *json) {
         return err;
     lua_setglobal(state, "args");
     return ESP_OK;
+}
+
+static cJSON *lua_to_cjson(lua_State *state, int index, int depth);
+
+static bool table_is_array(lua_State *state, int index, lua_Integer *length_out) {
+    index = lua_absindex(state, index);
+    lua_Integer length = (lua_Integer)lua_rawlen(state, index);
+    if (length <= 0)
+        return false;
+    int keys = 0;
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0) {
+        keys++;
+        if (!lua_isinteger(state, -2)) {
+            lua_pop(state, 2);
+            return false;
+        }
+        lua_Integer key = lua_tointeger(state, -2);
+        if (key < 1 || key > length) {
+            lua_pop(state, 2);
+            return false;
+        }
+        lua_pop(state, 1);
+    }
+    *length_out = length;
+    return keys == (int)length;
+}
+
+static cJSON *lua_to_cjson(lua_State *state, int index, int depth) {
+    if (depth > LUA_RUNTIME_RESULT_MAX_DEPTH)
+        return cJSON_CreateNull();
+    index = lua_absindex(state, index);
+    switch (lua_type(state, index)) {
+        case LUA_TNIL:
+            return cJSON_CreateNull();
+        case LUA_TBOOLEAN:
+            return cJSON_CreateBool(lua_toboolean(state, index));
+        case LUA_TNUMBER: {
+            if (lua_isinteger(state, index))
+                return cJSON_CreateNumber((double)lua_tointeger(state, index));
+            double value = lua_tonumber(state, index);
+            if (!isfinite(value))
+                return cJSON_CreateNull();
+            return cJSON_CreateNumber(value);
+        }
+        case LUA_TSTRING:
+            return cJSON_CreateString(lua_tostring(state, index));
+        case LUA_TTABLE: {
+            lua_Integer length = 0;
+            if (table_is_array(state, index, &length)) {
+                cJSON *array = cJSON_CreateArray();
+                if (!array)
+                    return cJSON_CreateNull();
+                lua_Integer limit = length < LUA_RUNTIME_RESULT_MAX_KEYS ? length
+                                                                         : LUA_RUNTIME_RESULT_MAX_KEYS;
+                for (lua_Integer i = 1; i <= limit; ++i) {
+                    lua_rawgeti(state, index, i);
+                    cJSON *item = lua_to_cjson(state, -1, depth + 1);
+                    if (!item)
+                        item = cJSON_CreateNull();
+                    cJSON_AddItemToArray(array, item);
+                    lua_pop(state, 1);
+                }
+                return array;
+            }
+            cJSON *object = cJSON_CreateObject();
+            if (!object)
+                return cJSON_CreateNull();
+            int keys = 0;
+            lua_pushnil(state);
+            while (lua_next(state, index) != 0) {
+                if (keys >= LUA_RUNTIME_RESULT_MAX_KEYS) {
+                    lua_pop(state, 2);
+                    break;
+                }
+                char key_buf[32];
+                const char *key = NULL;
+                if (lua_type(state, -2) == LUA_TSTRING) {
+                    key = lua_tostring(state, -2);
+                } else if (lua_isinteger(state, -2)) {
+                    snprintf(key_buf, sizeof(key_buf), "%lld",
+                             (long long)lua_tointeger(state, -2));
+                    key = key_buf;
+                }
+                if (key) {
+                    cJSON *item = lua_to_cjson(state, -1, depth + 1);
+                    if (!item)
+                        item = cJSON_CreateNull();
+                    cJSON_AddItemToObject(object, key, item);
+                    keys++;
+                }
+                lua_pop(state, 1);
+            }
+            return object;
+        }
+        default: {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "<%s>", luaL_typename(state, index));
+            return cJSON_CreateString(buf);
+        }
+    }
+}
+
+static void store_lua_result(runtime_job_t *job, lua_State *state) {
+    if (!job->result)
+        return;
+    int nresults = lua_gettop(state);
+    cJSON *root = NULL;
+    if (nresults <= 0) {
+        root = cJSON_CreateNull();
+    } else if (nresults == 1) {
+        root = lua_to_cjson(state, 1, 0);
+    } else {
+        root = cJSON_CreateArray();
+        if (root) {
+            int limit = nresults < LUA_RUNTIME_RESULT_MAX_KEYS ? nresults : LUA_RUNTIME_RESULT_MAX_KEYS;
+            for (int i = 1; i <= limit; ++i) {
+                cJSON *item = lua_to_cjson(state, i, 0);
+                if (!item)
+                    item = cJSON_CreateNull();
+                cJSON_AddItemToArray(root, item);
+            }
+        }
+    }
+    if (!root)
+        root = cJSON_CreateNull();
+    char *printed = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!printed) {
+        memcpy(job->result, "null", 5);
+        job->result_length = 4;
+        job->result_truncated = true;
+        return;
+    }
+    size_t length = strlen(printed);
+    if (length >= LUA_RUNTIME_RESULT_SIZE) {
+        memcpy(job->result, "null", 5);
+        job->result_length = 4;
+        job->result_truncated = true;
+    } else {
+        memcpy(job->result, printed, length + 1);
+        job->result_length = length;
+        job->result_truncated = false;
+    }
+    cJSON_free(printed);
+}
+
+static int call_entry_function(lua_State *state, const char *entry) {
+    lua_settop(state, 0);
+    lua_getglobal(state, entry);
+    if (!lua_isfunction(state, -1)) {
+        lua_pop(state, 1);
+        lua_pushfstring(state, "entry function not found: %s", entry);
+        return LUA_ERRRUN;
+    }
+    lua_getglobal(state, "args");
+    if (lua_isnil(state, -1)) {
+        lua_pop(state, 1);
+        lua_newtable(state);
+    }
+    return lua_pcall(state, 1, LUA_MULTRET, 0);
 }
 
 static esp_err_t execute_job(runtime_job_t *job) {
@@ -494,12 +671,16 @@ static esp_err_t execute_job(runtime_job_t *job) {
     result = luaL_loadbuffer(state, source, source_length, job->name ? job->name : "lua_job");
     if (result == LUA_OK)
         result = lua_pcall(state, 0, LUA_MULTRET, 0);
+    if (result == LUA_OK && job->entry && job->entry[0])
+        result = call_entry_function(state, job->entry);
     if (result != LUA_OK) {
         const char *message = lua_tostring(state, -1);
         lua_runtime_append_output(&context, "ERROR: ", 7);
         lua_runtime_append_output(&context, message ? message : "unknown error",
                                   message ? strlen(message) : 13);
         lua_runtime_append_output(&context, "\n", 1);
+    } else if (job->entry && job->entry[0]) {
+        store_lua_result(job, state);
     }
     job->output_length = context.output_length;
     job->output_truncated = context.truncated;
@@ -532,7 +713,9 @@ static void job_task(void *arg) {
     lua_runtime_job_info_t info = {.id = job->id,
                                    .state = job->state,
                                    .output_length = job->output_length,
-                                   .output_truncated = job->output_truncated};
+                                   .output_truncated = job->output_truncated,
+                                   .result_length = job->result_length,
+                                   .result_truncated = job->result_truncated};
     lua_runtime_job_callback_t callback = s_callback;
     void *callback_ctx = s_callback_ctx;
     xSemaphoreGive(s_lock);
@@ -566,6 +749,13 @@ esp_err_t lua_runtime_init(void) {
         s_lock = NULL;
         return uart_result;
     }
+    esp_err_t http_result = lua_http_init();
+    if (http_result != ESP_OK) {
+        lua_uart_deinit();
+        vSemaphoreDelete(s_lock);
+        s_lock = NULL;
+        return http_result;
+    }
     s_initialized = true;
     ESP_LOGI(TAG, "independent Lua runtime initialized");
     return ESP_OK;
@@ -596,6 +786,7 @@ esp_err_t lua_runtime_deinit(void) {
     }
     for (size_t i = 0; i < LUA_RUNTIME_MAX_JOBS; ++i)
         free_job(&s_jobs[i]);
+    lua_http_deinit();
     lua_uart_deinit();
     vSemaphoreDelete(s_lock);
     s_lock = NULL;
@@ -646,9 +837,12 @@ static runtime_job_t *new_job(const lua_runtime_job_config_t *config) {
             job->code = config->code ? strdup(config->code) : NULL;
             job->path = config->path ? strdup(config->path) : NULL;
             job->args_json = config->args_json ? strdup(config->args_json) : NULL;
+            job->entry = config->entry ? strdup(config->entry) : NULL;
             job->output = calloc(1, LUA_RUNTIME_OUTPUT_SIZE);
+            job->result = calloc(1, LUA_RUNTIME_RESULT_SIZE);
             if (!job->name || (config->code && !job->code) || (config->path && !job->path) ||
-                (config->args_json && !job->args_json) || !job->output) {
+                (config->args_json && !job->args_json) || (config->entry && !job->entry) ||
+                !job->output || !job->result) {
                 free_job(job);
                 return NULL;
             }
@@ -735,10 +929,29 @@ esp_err_t lua_runtime_get_job(lua_runtime_job_id_t job_id, lua_runtime_job_info_
                 .state = s_jobs[i].state,
                 .output_length = s_jobs[i].output_length,
                 .output_truncated = s_jobs[i].output_truncated,
+                .result_length = s_jobs[i].result_length,
+                .result_truncated = s_jobs[i].result_truncated,
             };
             if (output && output_size) {
                 strlcpy(output, s_jobs[i].output ? s_jobs[i].output : "", output_size);
             }
+            xSemaphoreGive(s_lock);
+            return ESP_OK;
+        }
+    }
+    xSemaphoreGive(s_lock);
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t lua_runtime_get_job_result(lua_runtime_job_id_t job_id, char *result, size_t result_size) {
+    if (!s_initialized)
+        return ESP_ERR_INVALID_STATE;
+    if (!result || result_size == 0)
+        return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (size_t i = 0; i < LUA_RUNTIME_MAX_JOBS; ++i) {
+        if (s_jobs[i].used && s_jobs[i].id == job_id) {
+            strlcpy(result, s_jobs[i].result ? s_jobs[i].result : "", result_size);
             xSemaphoreGive(s_lock);
             return ESP_OK;
         }

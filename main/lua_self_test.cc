@@ -9,6 +9,7 @@
 
 #include <cstring>
 #include <stdio.h>
+#include <string.h>
 
 namespace {
 
@@ -139,6 +140,33 @@ case("audio backend", function()
   check("stop_all", audio.is_playing(h1) == false and audio.is_playing(h2) == false)
 end)
 
+case("http module", function()
+  local http = require("http")
+  check("request", type(http.request) == "function")
+  check("get", type(http.get) == "function")
+  check("post", type(http.post) == "function")
+  local ok, err = pcall(function()
+    http.request({ url = "https://example.com/" })
+  end)
+  check("gated", not ok and string.find(tostring(err), "capability", 1, true) ~= nil)
+end)
+
+case("camera speech device modules", function()
+  local camera = require("camera")
+  local speech = require("speech")
+  local device = require("device")
+  check("camera.explain", type(camera.explain) == "function")
+  check("speech.say", type(speech.say) == "function")
+  check("device.set_brightness", type(device.set_brightness) == "function")
+  check("device.set_volume", type(device.set_volume) == "function")
+  check("device.vibrate", type(device.vibrate) == "function")
+  check("device.notify", type(device.notify) == "function")
+  local ok, err = pcall(function()
+    camera.explain("ping")
+  end)
+  check("camera gated", not ok and string.find(tostring(err), "capability", 1, true) ~= nil)
+end)
+
 print(string.format("SUITE lua_api end pass=%d fail=%d", pass, fail))
 assert(fail == 0, "Lua API assertions failed")
 )LUA";
@@ -173,6 +201,46 @@ rejects({port = 0, data_bits = 9})
 rejects({port = 0, stop_bits = 3})
 rejects({port = 0, parity = "bad"})
 print("PASS uart argument validation")
+)LUA";
+
+constexpr const char kHttpGateSuite[] = R"LUA(
+local http = require("http")
+local ok, err = pcall(function()
+  http.request({ url = "https://example.com/" })
+end)
+assert(not ok and string.find(tostring(err), "capability", 1, true) ~= nil)
+ok, err = pcall(function()
+  http.get("https://example.com/")
+end)
+assert(not ok and string.find(tostring(err), "capability", 1, true) ~= nil)
+print("PASS http capability gate")
+)LUA";
+
+constexpr const char kHttpValidationSuite[] = R"LUA(
+local http = require("http")
+local function rejects(opts)
+  local ok = pcall(function() http.request(opts) end)
+  assert(not ok)
+end
+rejects({})
+rejects({ url = "ftp://example.com/" })
+rejects({ url = "https://" })
+rejects({ url = "https:///" })
+rejects({ url = "not-a-url" })
+rejects({ url = "https://example.com/\n" })
+rejects({ method = "TRACE", url = "https://example.com/" })
+rejects({ method = "PATCH", url = "https://example.com/" })
+rejects({ url = "https://example.com/", timeout_ms = 0 })
+rejects({ url = "https://example.com/", timeout_ms = 60001 })
+rejects({ url = "https://example.com/", max_body = 0 })
+rejects({ url = "https://example.com/", max_body = 256 * 1024 + 1 })
+rejects({ method = "POST", url = "https://example.com/", body = string.rep("a", 64 * 1024 + 1) })
+rejects({ url = "https://example.com/", headers = { [1] = "x" } })
+local ok = pcall(function() http.get("ftp://example.com/") end)
+assert(not ok)
+ok = pcall(function() http.post("https://example.com/", 123) end)
+assert(not ok)
+print("PASS http argument validation")
 )LUA";
 
 // A small page that behaves like a real app: build children, become active,
@@ -453,6 +521,16 @@ constexpr const char kOutputSuite[] = R"LUA(
 for i = 1, 64 do print(string.rep("x", 120)) end
 )LUA";
 
+constexpr const char kEntryMainSuite[] = R"LUA(
+function main(args)
+  return { n = args.n + 1, ok = true, list = {1, 2, 3} }
+end
+)LUA";
+
+constexpr const char kEntryMissingSuite[] = R"LUA(
+print("no main defined")
+)LUA";
+
 volatile bool s_started = false;
 
 void LogOutput(const char* name, esp_err_t result, const char* output) {
@@ -512,6 +590,63 @@ bool RunStress(const char* name, const char* code, uint32_t base_timeout,
     snprintf(args, sizeof(args), "{\"rounds\":%d}", kStressRounds);
     const uint32_t timeout = base_timeout + static_cast<uint32_t>(kStressRounds) * timeout_per_round;
     return Run(name, code, args, timeout, capabilities, expected);
+}
+
+bool RunEntryResultCase() {
+    ESP_LOGI(TAG, "CASE_BEGIN name=lua_entry_result");
+    lua_runtime_job_config_t config = {
+        .name = "lua_entry_result",
+        .code = kEntryMainSuite,
+        .path = nullptr,
+        .args_json = "{\"n\":41}",
+        .timeout_ms = 3000,
+        .stack_size = 16 * 1024,
+        .priority = 4,
+        .capabilities = kLogCapability,
+        .entry = "main",
+    };
+    lua_runtime_job_id_t id = 0;
+    if (lua_runtime_start(&config, &id) != ESP_OK)
+        return false;
+    for (int i = 0; i < 300; ++i) {
+        lua_runtime_job_info_t info = {};
+        if (lua_runtime_get_job(id, &info, nullptr, 0) == ESP_OK &&
+            info.state >= LUA_RUNTIME_JOB_DONE) {
+            char result[256] = {};
+            lua_runtime_get_job_result(id, result, sizeof(result));
+            ESP_LOGI(TAG, "lua_entry_result state=%d result=%s", static_cast<int>(info.state),
+                     result);
+            const bool passed = info.state == LUA_RUNTIME_JOB_DONE && strstr(result, "\"n\":42") &&
+                                strstr(result, "\"ok\":true") && strstr(result, "[1,2,3]");
+            ESP_LOGI(TAG, "CASE_%s name=lua_entry_result", passed ? "PASS" : "FAIL");
+            vTaskDelay(pdMS_TO_TICKS(20));
+            return passed;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return false;
+}
+
+bool RunEntryMissingCase() {
+    ESP_LOGI(TAG, "CASE_BEGIN name=lua_entry_missing");
+    lua_runtime_job_config_t config = {
+        .name = "lua_entry_missing",
+        .code = kEntryMissingSuite,
+        .path = nullptr,
+        .args_json = "{}",
+        .timeout_ms = 3000,
+        .stack_size = 16 * 1024,
+        .priority = 4,
+        .capabilities = kLogCapability,
+        .entry = "main",
+    };
+    char output[256] = {};
+    const esp_err_t result = lua_runtime_run(&config, output, sizeof(output));
+    const bool passed = result == ESP_FAIL && strstr(output, "entry function not found");
+    ESP_LOGI(TAG, "lua_entry_missing result=%s output=%s", esp_err_to_name(result), output);
+    ESP_LOGI(TAG, "CASE_%s name=lua_entry_missing", passed ? "PASS" : "FAIL");
+    vTaskDelay(pdMS_TO_TICKS(20));
+    return passed;
 }
 
 bool RunOutputCase() {
@@ -741,6 +876,10 @@ void Task(void*) {
              "{\"suite\":\"boot\",\"answer\":42,\"enabled\":true,\"items\":[\"a\",\"b\"],\"nested\":{\"ok\":true}}",
              kSuiteTimeoutMs, kUiCapability))
         ++failed;
+    if (!RunEntryResultCase())
+        ++failed;
+    if (!RunEntryMissingCase())
+        ++failed;
     if (!RunStress("virtual_lifecycle", kVirtualLifecycleApp, 3000, 300, kUiCapability))
         ++failed;
     if (!RunStress("virtual_lifecycle_reenter", kVirtualLifecycleApp, 3000, 300,
@@ -779,6 +918,10 @@ void Task(void*) {
     if (!Run("uart_policy", kUartPolicySuite, "{}", 3000, LUA_RUNTIME_CAP_UART))
         ++failed;
     if (!Run("uart_validation", kUartValidationSuite, "{}", 3000, LUA_RUNTIME_CAP_UART))
+        ++failed;
+    if (!Run("http_gate", kHttpGateSuite, "{}", 3000, 0))
+        ++failed;
+    if (!Run("http_validation", kHttpValidationSuite, "{}", 3000, LUA_RUNTIME_CAP_HTTP))
         ++failed;
     constexpr int skipped = 1;
     ESP_LOGW(TAG, "CASE_SKIP name=uart_loopback reason=no board-approved free UART loopback");

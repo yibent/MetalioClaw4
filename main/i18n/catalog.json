@@ -2623,6 +2623,51 @@
       "key": "WIFI_NOT_CONNECTED_HINT",
       "zh-CN": "请先连接 WiFi 后再使用该应用",
       "en-US": "Connect to WiFi before using this app"
+    },
+    {
+      "key": "LUA_AGENT",
+      "zh-CN": "远程脚本",
+      "en-US": "Lua Agent"
+    },
+    {
+      "key": "LUA_AGENT_CONNECTING",
+      "zh-CN": "正在连接服务器",
+      "en-US": "Connecting to server"
+    },
+    {
+      "key": "LUA_AGENT_WAITING",
+      "zh-CN": "已连接，等待任务",
+      "en-US": "Connected, waiting for work"
+    },
+    {
+      "key": "LUA_AGENT_RUNNING",
+      "zh-CN": "正在运行脚本",
+      "en-US": "Running script"
+    },
+    {
+      "key": "LUA_AGENT_RECONNECTING",
+      "zh-CN": "连接断开，正在重连",
+      "en-US": "Disconnected, reconnecting"
+    },
+    {
+      "key": "LUA_AGENT_ERROR",
+      "zh-CN": "连接失败",
+      "en-US": "Connection failed"
+    },
+    {
+      "key": "LUA_AGENT_LAST_RESULT",
+      "zh-CN": "最近返回值",
+      "en-US": "Last result"
+    },
+    {
+      "key": "LUA_AGENT_OUTPUT",
+      "zh-CN": "脚本输出",
+      "en-US": "Script output"
+    },
+    {
+      "key": "LUA_AGENT_HINT",
+      "zh-CN": "打开后自动连接，等待服务端下发 Lua 脚本",
+      "en-US": "Connects automatically and waits for Lua scripts"
     }
   ]
 }

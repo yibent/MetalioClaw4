@@ -66,7 +66,7 @@ inline void LogHttpResponse(const char*, int, const std::string&) {}
 
 #endif
 
-constexpr const char* kHost = "http://xxxxx.com";
+constexpr const char* kHost = "https://max.sh.creativone.cn";
 
 constexpr const char* kApiV1Prefix = "/api/v1";
 constexpr const char* kXiaozhiDevicePrefix = "/xiaozhi/device";
@@ -95,12 +95,28 @@ constexpr const char* kText2ImageTaskFmt =
 // Sonicloud 实时同声传译：换 Token，返回 data.wsUrl
 constexpr const char* kSinicloudToken = "/xiaozhi/api/sinicloud/token";
 
+// Lua Agent WebSocket. Device connects here, sends hello, then waits for run.
+constexpr const char* kLuaAgentWsPath = "/api/device-ws/v1";
+
 // Weather
 constexpr const char* kWeatherDistrictPath =
     "/api/v1/weather/district?dataType=all&districtId=";
 
 inline std::string Url(const char* path) {
     return std::string(kHost) + path;
+}
+
+inline std::string LuaAgentWsUrl() {
+    const std::string host = kHost;
+    std::string scheme = "ws://";
+    std::string rest = host;
+    if (rest.compare(0, 8, "https://") == 0) {
+        scheme = "wss://";
+        rest = rest.substr(8);
+    } else if (rest.compare(0, 7, "http://") == 0) {
+        rest = rest.substr(7);
+    }
+    return scheme + rest + kLuaAgentWsPath;
 }
 
 inline std::string WeatherDistrictUrl(const std::string& district_id) {

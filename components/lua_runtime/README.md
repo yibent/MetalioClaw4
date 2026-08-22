@@ -24,13 +24,21 @@ Use `lua_runtime_get_job()` to read state and captured output, and
 `lua_runtime_stop()` to cooperatively cancel a job. Every job has an isolated
 Lua VM and FreeRTOS task.
 
+Set `entry` (typically `"main"`) to call a global function after the chunk
+loads. The function receives the `args` table and its return value(s) are
+stored as JSON. Read them with `lua_runtime_get_job_result()`. One return
+value is encoded directly; two or more become a JSON array; none becomes
+`null`. Tables encode as JSON arrays when they are a dense `1..n` sequence,
+otherwise as objects.
+
 Custom native modules can be registered once with
 `lua_runtime_register_module()` before jobs are started.
 
 Hardware capabilities are explicit per job. `LUA_RUNTIME_CAP_UART` enables the
 UART module, but a board must also register each allowed UART port with
 `lua_runtime_register_uart_port()`. Registration fixes the port's TX/RX pins and
-maximum baud rate; Lua cannot remap pins.
+maximum baud rate; Lua cannot remap pins. `LUA_RUNTIME_CAP_HTTP` enables the
+managed HTTP client; Lua still cannot open raw sockets.
 
 Board initialization registers an explicitly wired port before starting jobs:
 
@@ -105,6 +113,67 @@ port:close()
 
 `read()` and `poll_event()` periodically check runtime cancellation and timeout.
 UART handles are exclusive and automatically released when their Lua VM closes.
+
+The built-in `camera`, `speech`, and `device` modules are application-backed:
+
+```lua
+local camera = require("camera")
+local text, err = camera.explain("图里有什么")
+
+local speech = require("speech")
+speech.say("计时结束")
+
+local device = require("device")
+device.set_brightness(80)
+device.set_volume(70)
+device.vibrate(300)
+device.notify("ok")
+```
+
+`camera.explain` requires `LUA_RUNTIME_CAP_CAMERA`.
+
+The built-in `http` module is a managed client, not a raw socket API. Jobs must
+be started with `LUA_RUNTIME_CAP_HTTP`. The application backend uses the current
+board network (Wi-Fi or cellular), caps body size, follows a small number of
+redirects, and cooperatively checks job cancellation while the request runs.
+
+```lua
+local http = require("http")
+
+local res, err = http.request({
+    method = "GET",
+    url = "https://example.com/",
+    headers = { ["Accept"] = "application/json" },
+    timeout_ms = 15000,
+    max_body = 64 * 1024,
+})
+if not res then
+    print("request failed: " .. tostring(err))
+    return
+end
+print(res.status)
+print(res.headers["content-type"])
+print(res.body)
+
+local page, get_err = http.get("https://example.com/")
+local created, post_err = http.post("https://example.com/items", "{\"ok\":true}", {
+    headers = { ["Content-Type"] = "application/json" },
+})
+```
+
+`http.request` returns `res` for completed HTTP transactions, including 4xx and
+5xx. Transport failures, timeouts, and cancellation return `nil, error`. Allowed
+methods are GET, POST, PUT, DELETE, and HEAD. Connection, Host, and
+Content-Length headers are owned by the runtime. Response bodies default to a
+64KiB cap (hard limit 256KiB). At most two Lua HTTP requests may run at once.
+
+See `examples/http_demo.lua` for a complete GET example.
+
+The desktop app「远程脚本」uses this runtime over a WebSocket protocol
+compatible with CubeMax `/api/device-ws/v1` (`main/LUA_AGENT.md`).
+
+Device Lua modules for workflow nodes: `camera.explain`, `speech.say`,
+`device.set_brightness` / `set_volume` / `vibrate` / `notify`.
 
 The built-in `ui` module currently provides:
 

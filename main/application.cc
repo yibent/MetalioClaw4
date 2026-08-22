@@ -10,6 +10,9 @@
 #include "assets.h"
 #include "settings.h"
 #include "lua_audio_backend.h"
+#include "lua_board_backend.h"
+#include "lua_camera_backend.h"
+#include "lua_http_backend.h"
 #include "lua_runtime.h"
 #include "lua_self_test.h"
 
@@ -468,6 +471,9 @@ void Application::Start() {
     audio_service_.Initialize(codec);
     audio_service_.Start();
     RegisterLuaAudioBackend();
+    RegisterLuaHttpBackend();
+    RegisterLuaCameraBackend();
+    RegisterLuaBoardBackend();
     // The self-test task waits briefly before taking the Lua UI. Starting it
     // here means it is independent of network/OTA success later in Start().
     LuaSelfTest::Start();
