@@ -2,6 +2,11 @@
 
 #include "lvgl.h"
 
+// Lock the active LVGL backend from a worker. Uses the board display lock
+// (lvgl_port on Fangtang, esp_lv_adapter on Metalio). timeout_ms < 0 waits.
+bool screen_lvgl_lock(int timeout_ms = -1);
+void screen_lvgl_unlock();
+
 // Make `obj` and all of its descendants ignore touch input, so that
 // PRESSED / RELEASED events fall through to the screen. This is required
 // for screen-level swipe gestures to receive coordinates regardless of

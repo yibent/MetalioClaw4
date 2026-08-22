@@ -3,7 +3,25 @@
 #include <algorithm>
 #include <cstdlib>
 
+#include "board.h"
+#include "display.h"
 #include "esp_log.h"
+
+bool screen_lvgl_lock(int timeout_ms) {
+    Display* display = Board::GetInstance().GetDisplay();
+    if (display == nullptr) {
+        return false;
+    }
+    const int wait_ms = timeout_ms < 0 ? 30000 : timeout_ms;
+    return display->Lock(wait_ms);
+}
+
+void screen_lvgl_unlock() {
+    Display* display = Board::GetInstance().GetDisplay();
+    if (display != nullptr) {
+        display->Unlock();
+    }
+}
 
 namespace {
 

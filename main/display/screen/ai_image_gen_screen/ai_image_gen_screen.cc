@@ -31,8 +31,11 @@
 #include "screen_util.h"
 #include "system_info.h"
 
-LV_FONT_DECLARE(font_puhui_20_4);
-LV_FONT_DECLARE(font_puhui_30_4);
+#include <font_awesome.h>
+#include "app_shell.h"
+#include "fonts.h"
+#include "theme.h"
+#include "ui_components.h"
 
 namespace {
 
@@ -46,18 +49,9 @@ constexpr size_t kMaxRecordBytes =
     static_cast<size_t>(kSampleRate) * kBytesPerSample * kMaxRecordSeconds;
 constexpr int  kMinRecordMs      = 300;
 
-constexpr int32_t kPanelW      = DISPLAY_WIDTH;
-constexpr int32_t kPanelH      = DISPLAY_HEIGHT;
-constexpr int32_t kHeaderH     = 88;
-constexpr int32_t kBackBtnSize = 72;
-constexpr int32_t kFooterH     = 108;
-constexpr int32_t kBodyH       = kPanelH - kHeaderH - kFooterH;
-constexpr int32_t kHeaderSidePad = 8;
+constexpr int32_t kPad         = agent_ui::metrics::kPagePadding;
 constexpr int32_t kPromptAreaH = 56;
-constexpr int32_t kTabBarH     = 52;
-// Account for body padding and the flex row gap so the gallery stays above
-// the footer on the taller native panel as well as the legacy square panel.
-constexpr int32_t kGalleryH    = kBodyH - kPromptAreaH - 26;
+constexpr int32_t kTabBarH     = 44;
 
 constexpr int   kPollIntervalMs      = 3000;
 constexpr int   kPollFirstDelayMs    = 1500;
@@ -67,18 +61,11 @@ constexpr int   kHttpTimeoutMs       = 30000;
 constexpr size_t kImageMaxBytes      = 800 * 1024;
 constexpr size_t kMaxButtonTextBytes = 48;
 
-constexpr uint32_t kColorBg         = 0x0E1116;
-constexpr uint32_t kColorHeaderBg   = 0x12151C;
-constexpr uint32_t kColorDivider    = 0x2A2F3A;
-constexpr uint32_t kColorCard       = 0x1A1F2A;
-constexpr uint32_t kColorText       = 0xFFFFFF;
-constexpr uint32_t kColorHintText   = 0x9AA3B2;
-constexpr uint32_t kColorPromptText = 0xE5E7EB;
-
-constexpr uint32_t kColorRecordBtnIdle   = 0x2563EB;
-constexpr uint32_t kColorRecordBtnActive = 0xDC2626;
-constexpr uint32_t kColorRecordBtnBusy   = 0x4B5563;
-constexpr uint32_t kColorTabActive       = 0x3B82F6;
+const agent_ui::ThemeColors& Colors() {
+    return agent_ui::Theme::Get().colors();
+}
+const lv_font_t* FontTitle() { return agent_ui::fonts::MediumBold(); }
+const lv_font_t* FontBody() { return agent_ui::fonts::SmallBold(); }
 
 enum class State : uint8_t {
     Idle,
@@ -220,7 +207,7 @@ void post_button_text(const char* text, uint32_t session) {
     if (session != s_session.load(std::memory_order_acquire)) {
         return;
     }
-    if (esp_lv_adapter_lock(-1) != ESP_OK) {
+    if (!screen_lvgl_lock(-1)) {
         return;
     }
     if (session == s_session.load(std::memory_order_acquire) && screen_alive() &&
@@ -230,7 +217,7 @@ void post_button_text(const char* text, uint32_t session) {
         std::snprintf(buf, sizeof(buf), "%s", text);
         lv_label_set_text(s_record_lbl, buf);
     }
-    esp_lv_adapter_unlock();
+    screen_lvgl_unlock();
 }
 
 void update_button_ui_locked(State st) {
@@ -240,8 +227,11 @@ void update_button_ui_locked(State st) {
     switch (st) {
         case State::Idle:
             lv_obj_set_style_bg_color(s_record_btn,
-                                      lv_color_hex(kColorRecordBtnIdle),
+                                      lv_color_hex(Colors().accent),
                                       LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_record_lbl,
+                                        lv_color_hex(Colors().accent_ink),
+                                        LV_PART_MAIN);
             lv_label_set_text(s_record_lbl, I18n::T("按住说话"));
             lv_obj_add_flag(s_record_btn, LV_OBJ_FLAG_CLICKABLE);
             if (s_n_dd != nullptr) {
@@ -250,8 +240,10 @@ void update_button_ui_locked(State st) {
             break;
         case State::Recording:
             lv_obj_set_style_bg_color(s_record_btn,
-                                      lv_color_hex(kColorRecordBtnActive),
+                                      lv_color_hex(Colors().danger),
                                       LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_record_lbl, lv_color_white(),
+                                        LV_PART_MAIN);
             lv_label_set_text(s_record_lbl, I18n::T("已录 0.0 秒"));
             lv_obj_add_flag(s_record_btn, LV_OBJ_FLAG_CLICKABLE);
             if (s_n_dd != nullptr) {
@@ -260,8 +252,11 @@ void update_button_ui_locked(State st) {
             break;
         case State::Busy:
             lv_obj_set_style_bg_color(s_record_btn,
-                                      lv_color_hex(kColorRecordBtnBusy),
+                                      lv_color_hex(Colors().raised),
                                       LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_record_lbl,
+                                        lv_color_hex(Colors().text),
+                                        LV_PART_MAIN);
             // 文案由 post_button_text / tick_timer 覆盖（识别中 / 生成中已用时）
             lv_obj_remove_flag(s_record_btn, LV_OBJ_FLAG_CLICKABLE);
             if (s_n_dd != nullptr) {
@@ -278,13 +273,13 @@ void set_state_ui(State st, uint32_t session) {
         return;
     }
     s_state.store(st, std::memory_order_release);
-    if (esp_lv_adapter_lock(-1) != ESP_OK) {
+    if (!screen_lvgl_lock(-1)) {
         return;
     }
     if (session == s_session.load(std::memory_order_acquire) && screen_alive()) {
         update_button_ui_locked(st);
     }
-    esp_lv_adapter_unlock();
+    screen_lvgl_unlock();
 }
 
 // 退出 worker：先恢复 Idle（可点），再可选覆盖错误文案。
@@ -340,7 +335,7 @@ lv_obj_t* make_image_card(lv_obj_t* parent, const LvglAllocatedImage* holder) {
     lv_obj_t* wrap = lv_obj_create(parent);
     screen_strip_obj_chrome(wrap);
     lv_obj_set_size(wrap, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(wrap, lv_color_hex(kColorCard), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(wrap, lv_color_hex(Colors().surface), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(wrap, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(wrap, 12, LV_PART_MAIN);
     lv_obj_set_style_pad_all(wrap, 8, LV_PART_MAIN);
@@ -701,12 +696,12 @@ void apply_images_ui(uint32_t session,
         images.clear();
         return;
     }
-    if (esp_lv_adapter_lock(-1) != ESP_OK) {
+    if (!screen_lvgl_lock(-1)) {
         images.clear();
         return;
     }
     if (!session_alive(session) || !screen_alive() || s_gallery == nullptr) {
-        esp_lv_adapter_unlock();
+        screen_lvgl_unlock();
         images.clear();
         return;
     }
@@ -731,14 +726,14 @@ void apply_images_ui(uint32_t session,
     images.clear();
 
     if (decoded.empty()) {
-        esp_lv_adapter_unlock();
+        screen_lvgl_unlock();
         return;
     }
 
     if (decoded.size() == 1) {
         make_image_card(s_gallery, decoded[0].get());
         s_image_holders = std::move(decoded);
-        esp_lv_adapter_unlock();
+        screen_lvgl_unlock();
         return;
     }
 
@@ -746,19 +741,19 @@ void apply_images_ui(uint32_t session,
     lv_obj_set_size(tv, LV_PCT(100), LV_PCT(100));
     lv_tabview_set_tab_bar_position(tv, LV_DIR_TOP);
     lv_tabview_set_tab_bar_size(tv, kTabBarH);
-    lv_obj_set_style_bg_color(tv, lv_color_hex(kColorBg), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(tv, lv_color_hex(Colors().background), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(tv, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(tv, 0, LV_PART_MAIN);
 
     lv_obj_t* bar = lv_tabview_get_tab_bar(tv);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(kColorCard), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(Colors().surface), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_text_color(bar, lv_color_hex(kColorText), LV_PART_MAIN);
-    lv_obj_set_style_text_font(bar, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(kColorTabActive),
+    lv_obj_set_style_text_color(bar, lv_color_hex(Colors().text), LV_PART_MAIN);
+    lv_obj_set_style_text_font(bar, FontBody(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(Colors().accent),
                               static_cast<lv_part_t>(LV_PART_ITEMS) |
                                   static_cast<lv_state_t>(LV_STATE_CHECKED));
-    lv_obj_set_style_text_color(bar, lv_color_hex(kColorText),
+    lv_obj_set_style_text_color(bar, lv_color_hex(Colors().text),
                                 static_cast<lv_part_t>(LV_PART_ITEMS) |
                                     static_cast<lv_state_t>(LV_STATE_CHECKED));
     screen_swipe_back_ignore(bar, true);
@@ -776,7 +771,7 @@ void apply_images_ui(uint32_t session,
                       static_cast<int>(i + 1));
         lv_obj_t* tab = lv_tabview_add_tab(tv, tab_name);
         screen_strip_obj_chrome(tab);
-        lv_obj_set_style_bg_color(tab, lv_color_hex(kColorBg), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(tab, lv_color_hex(Colors().background), LV_PART_MAIN);
         lv_obj_set_style_bg_opa(tab, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
         lv_obj_remove_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
@@ -785,7 +780,7 @@ void apply_images_ui(uint32_t session,
     }
 
     s_image_holders = std::move(decoded);
-    esp_lv_adapter_unlock();
+    screen_lvgl_unlock();
 }
 
 // ---------------------------------------------------------------------------
@@ -889,13 +884,13 @@ void worker_task(void* /*arg*/) {
     asr.body.shrink_to_fit();
 
     int n = 1;
-    if (esp_lv_adapter_lock(-1) == ESP_OK) {
+    if (screen_lvgl_lock(-1)) {
         if (session_alive(session) && screen_alive()) {
             n = selected_image_count();
             set_prompt_locked(prompt);
             clear_gallery_locked();
         }
-        esp_lv_adapter_unlock();
+        screen_lvgl_unlock();
     }
 
     s_gen_start_us.store(esp_timer_get_time(), std::memory_order_release);
@@ -1122,105 +1117,83 @@ void on_dropdown_ready(lv_event_t* e) {
     if (list == nullptr) {
         return;
     }
-    lv_obj_set_style_bg_color(list, lv_color_hex(kColorCard), LV_PART_MAIN);
-    lv_obj_set_style_text_color(list, lv_color_hex(kColorText), LV_PART_MAIN);
-    lv_obj_set_style_text_font(list, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(list, lv_color_hex(Colors().surface), LV_PART_MAIN);
+    lv_obj_set_style_text_color(list, lv_color_hex(Colors().text), LV_PART_MAIN);
+    lv_obj_set_style_text_font(list, FontBody(), LV_PART_MAIN);
     lv_obj_set_style_radius(list, 10, LV_PART_MAIN);
     lv_obj_set_style_max_height(list, 280, LV_PART_MAIN);
     screen_swipe_back_ignore(list, true);
 }
 
-void build_header(lv_obj_t* parent) {
-    lv_obj_t* top = lv_obj_create(parent);
-    screen_strip_obj_chrome(top);
-    lv_obj_set_size(top, kPanelW, kHeaderH);
-    lv_obj_set_pos(top, 0, 0);
-    lv_obj_remove_flag(top, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(top, lv_color_hex(kColorHeaderBg), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(top, LV_OPA_COVER, LV_PART_MAIN);
+void build_body(lv_obj_t* parent) {
+    lv_obj_t* body = lv_obj_create(parent);
+    screen_strip_obj_chrome(body);
+    lv_obj_set_size(body, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_pos(body, 0, 0);
+    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(body, kPad, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(body, kPad, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(body, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(body, 8, LV_PART_MAIN);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(body, 10, LV_PART_MAIN);
+    lv_obj_remove_flag(body, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* divider = lv_obj_create(top);
-    screen_strip_obj_chrome(divider);
-    lv_obj_set_size(divider, kPanelW, 1);
-    lv_obj_align(divider, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(divider, lv_color_hex(kColorDivider),
-                              LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, LV_PART_MAIN);
-    screen_make_input_passive(divider);
+    lv_obj_t* title_row = lv_obj_create(body);
+    screen_strip_obj_chrome(title_row);
+    lv_obj_set_size(title_row, LV_PCT(100), 48);
+    lv_obj_set_style_bg_opa(title_row, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_flex_flow(title_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(title_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_remove_flag(title_row, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* back = lv_button_create(top);
-    lv_obj_remove_style_all(back);
-    lv_obj_set_size(back, kBackBtnSize, kBackBtnSize);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, kHeaderSidePad, 0);
-    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(back, lv_color_hex(0xFFFFFF),
-                              LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(back, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(back, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-    lv_obj_add_event_cb(back, on_back_clicked, LV_EVENT_CLICKED, nullptr);
-    screen_swipe_back_ignore(back, true);
-
-    lv_obj_t* back_icon = lv_image_create(back);
-    lv_image_set_src(back_icon, "A:ic_app_back.spng");
-    lv_obj_remove_flag(back_icon, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_center(back_icon);
-
-    lv_obj_t* title = lv_label_create(top);
+    lv_obj_t* title = lv_label_create(title_row);
     lv_label_set_text(title, I18n::T("AI生图"));
-    lv_obj_set_style_text_font(title, &font_puhui_30_4, LV_PART_MAIN);
-    lv_obj_set_style_text_color(title, lv_color_hex(kColorText), LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, kHeaderSidePad + kBackBtnSize + 8,
-                 0);
+    lv_obj_set_style_text_font(title, FontTitle(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, lv_color_hex(Colors().text), LV_PART_MAIN);
     screen_make_input_passive(title);
 
-    lv_obj_t* n_lbl = lv_label_create(top);
-    lv_label_set_text(n_lbl, I18n::T("生成图片数量"));
-    lv_obj_set_style_text_font(n_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_set_style_text_color(n_lbl, lv_color_hex(kColorHintText),
+    lv_obj_t* count_wrap = lv_obj_create(title_row);
+    screen_strip_obj_chrome(count_wrap);
+    lv_obj_set_size(count_wrap, LV_SIZE_CONTENT, LV_PCT(100));
+    lv_obj_set_style_bg_opa(count_wrap, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_flex_flow(count_wrap, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(count_wrap, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(count_wrap, 8, LV_PART_MAIN);
+    lv_obj_remove_flag(count_wrap, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* n_lbl = lv_label_create(count_wrap);
+    lv_label_set_text(n_lbl, I18n::T("数量"));
+    lv_obj_set_style_text_font(n_lbl, FontBody(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(n_lbl, lv_color_hex(Colors().muted),
                                 LV_PART_MAIN);
-    lv_obj_align(n_lbl, LV_ALIGN_RIGHT_MID, -140, 0);
     screen_make_input_passive(n_lbl);
 
-    s_n_dd = lv_dropdown_create(top);
-    lv_obj_set_size(s_n_dd, 100, 48);
-    lv_obj_align(s_n_dd, LV_ALIGN_RIGHT_MID, -16, 0);
+    s_n_dd = lv_dropdown_create(count_wrap);
+    lv_obj_set_size(s_n_dd, 72, 40);
     lv_obj_set_style_radius(s_n_dd, 10, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_n_dd, lv_color_hex(kColorCard), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_n_dd, lv_color_hex(Colors().surface), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_n_dd, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_n_dd, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(s_n_dd, lv_color_hex(0x4B5563),
+    lv_obj_set_style_border_color(s_n_dd, lv_color_hex(Colors().border),
                                   LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_n_dd, lv_color_hex(kColorText),
+    lv_obj_set_style_text_color(s_n_dd, lv_color_hex(Colors().text),
                                 LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_n_dd, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_n_dd, FontBody(), LV_PART_MAIN);
     lv_dropdown_set_symbol(s_n_dd, LV_SYMBOL_DOWN);
     lv_dropdown_set_options(s_n_dd, "1\n2\n3\n4");
     lv_dropdown_set_selected(s_n_dd, 0);
     lv_obj_add_event_cb(s_n_dd, on_dropdown_ready, LV_EVENT_READY, nullptr);
     screen_swipe_back_ignore(s_n_dd, true);
-}
-
-void build_body(lv_obj_t* parent) {
-    lv_obj_t* body = lv_obj_create(parent);
-    screen_strip_obj_chrome(body);
-    lv_obj_set_size(body, kPanelW, kBodyH);
-    lv_obj_set_pos(body, 0, kHeaderH);
-    lv_obj_set_style_bg_color(body, lv_color_hex(kColorBg), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(body, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_pad_left(body, 20, LV_PART_MAIN);
-    lv_obj_set_style_pad_right(body, 20, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(body, 10, LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(body, 8, LV_PART_MAIN);
-    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(body, 8, LV_PART_MAIN);
-    lv_obj_remove_flag(body, LV_OBJ_FLAG_SCROLLABLE);
 
     s_prompt_lbl = lv_label_create(body);
     lv_obj_set_width(s_prompt_lbl, LV_PCT(100));
     lv_obj_set_height(s_prompt_lbl, kPromptAreaH);
     lv_label_set_long_mode(s_prompt_lbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(s_prompt_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_prompt_lbl, lv_color_hex(kColorPromptText),
+    lv_obj_set_style_text_font(s_prompt_lbl, FontBody(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_prompt_lbl, lv_color_hex(Colors().text),
                                 LV_PART_MAIN);
     set_prompt_locked("");
     screen_make_input_passive(s_prompt_lbl);
@@ -1228,48 +1201,25 @@ void build_body(lv_obj_t* parent) {
     s_gallery = lv_obj_create(body);
     screen_strip_obj_chrome(s_gallery);
     lv_obj_set_width(s_gallery, LV_PCT(100));
-    lv_obj_set_height(s_gallery, kGalleryH);
+    lv_obj_set_flex_grow(s_gallery, 1);
     lv_obj_set_style_bg_opa(s_gallery, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(s_gallery, LV_OBJ_FLAG_SCROLLABLE);
     screen_swipe_back_ignore(s_gallery, true);
 }
 
-void build_footer(lv_obj_t* parent) {
-    lv_obj_t* footer = lv_obj_create(parent);
-    screen_strip_obj_chrome(footer);
-    lv_obj_set_size(footer, kPanelW, kFooterH);
-    lv_obj_set_pos(footer, 0, kPanelH - kFooterH);
-    lv_obj_set_style_bg_color(footer, lv_color_hex(kColorBg), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_remove_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
-
-    constexpr int32_t kBtnW = (kPanelW - 32 < 400) ? kPanelW - 32 : 400;
-    constexpr int32_t kBtnH = 72;
-    s_record_btn = lv_button_create(footer);
-    lv_obj_set_size(s_record_btn, kBtnW, kBtnH);
-    lv_obj_align(s_record_btn, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_radius(s_record_btn, kBtnH / 2, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_record_btn, lv_color_hex(kColorRecordBtnIdle),
-                              LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_record_btn, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(s_record_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_border_width(s_record_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_record_btn,
-                              lv_color_hex(kColorRecordBtnActive),
+void build_actions(lv_obj_t* bar) {
+    auto primary = agent_ui::ui_components::AddBottomPrimaryButton(
+        bar, FONT_AWESOME_MICROPHONE, I18n::T("按住说话"), nullptr);
+    s_record_btn = primary.root;
+    s_record_lbl = primary.label;
+    lv_obj_set_style_bg_color(s_record_btn, lv_color_hex(Colors().danger),
                               LV_PART_MAIN | LV_STATE_PRESSED);
-
-    s_record_lbl = lv_label_create(s_record_btn);
-    lv_label_set_text(s_record_lbl, I18n::T("按住说话"));
-    lv_obj_set_style_text_color(s_record_lbl, lv_color_hex(0xFFFFFF),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_record_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(s_record_lbl);
-
     lv_obj_add_event_cb(s_record_btn, on_record_pressed, LV_EVENT_PRESSED,
                         nullptr);
     lv_obj_add_event_cb(s_record_btn, on_record_released, LV_EVENT_RELEASED,
                         nullptr);
     screen_swipe_back_ignore(s_record_btn, true);
+    agent_ui::ui_components::AddBottomActionSpacer(bar);
 }
 
 }  // namespace
@@ -1281,24 +1231,18 @@ lv_obj_t* AiImageGenScreen::Create() {
     s_state.store(State::Idle, std::memory_order_release);
     s_stop_requested.store(false, std::memory_order_release);
 
-    lv_obj_t* scr = lv_obj_create(nullptr);
-    s_screen = scr;
-    screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelW, kPanelH);
-    lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-
-    build_header(scr);
-    build_body(scr);
-    build_footer(scr);
+    auto shell =
+        agent_ui::CreateAppShell("AI生图", nullptr, true, on_back_clicked);
+    s_screen = shell.root;
+    build_body(shell.content);
+    build_actions(shell.actions);
 
     s_tick_timer = lv_timer_create(tick_timer_cb, 100, nullptr);
-    screen_mark_native_layout(scr);
-    lv_obj_add_event_cb(scr, on_screen_unloaded, LV_EVENT_SCREEN_UNLOADED,
+    screen_mark_native_layout(s_screen);
+    lv_obj_add_event_cb(s_screen, on_screen_unloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);
-    screen_attach_swipe_back(scr, on_swipe_back);
-    return scr;
+    screen_attach_swipe_back(s_screen, on_swipe_back);
+    return s_screen;
 }
 
 void AiImageGenScreen::LifecycleCallback(screen_lifecycle_event_t event) {
