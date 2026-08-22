@@ -50,6 +50,10 @@ void Backlight::SetBrightness(uint8_t brightness, bool permanent) {
     }
 
     if (brightness_ == brightness) {
+        target_brightness_ = brightness;
+        if (transition_timer_ != nullptr) {
+            esp_timer_stop(transition_timer_);
+        }
         return;
     }
 

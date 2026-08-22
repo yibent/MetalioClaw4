@@ -25,18 +25,35 @@ namespace agent_ui {
 namespace {
 
 constexpr char kTag[] = "AgentStandby";
-constexpr uint32_t kScreenOffDelayMs = 10000;
+constexpr uint32_t kScreenOffDelayMs = 30000;
+constexpr uint32_t kDoubleTapMinMs = 80;
+constexpr uint32_t kDoubleTapMaxMs = 450;
 constexpr uint8_t kDimBrightnessPercent = 5;
-constexpr int kSliderX = 30;
-constexpr int kSliderY = 602;
-constexpr int kSliderWidth = 660;
-constexpr int kSliderHeight = metrics::kBottomPrimaryActionHeight;
+constexpr bool kPortraitLock =
+    metrics::kDisplayHeight > metrics::kDisplayWidth;
 constexpr int kSliderInset = 4;
-constexpr int kSliderThumbSize = 96;
+constexpr int kSliderHeight = metrics::kBottomPrimaryActionHeight;
+constexpr int kSliderThumbSize = kSliderHeight - kSliderInset * 2;
+constexpr int kSliderX = kPortraitLock ? metrics::kPagePadding : 30;
+constexpr int kSliderWidth = metrics::kDisplayWidth - kSliderX * 2;
+constexpr int kSliderBottomMargin = kPortraitLock ? 40 : 14;
+constexpr int kSliderY =
+    metrics::kDisplayHeight - kSliderHeight - kSliderBottomMargin;
 constexpr int kSliderRange =
     kSliderWidth - kSliderThumbSize - kSliderInset * 2;
-constexpr int kUnlockThreshold =
-    kSliderRange * 86 / 100;
+constexpr int kUnlockThreshold = kSliderRange * 86 / 100;
+static_assert(kSliderThumbSize > 0);
+static_assert(kSliderRange > 0);
+constexpr int kTimeY =
+    kPortraitLock ? metrics::kStatusBarHeight + metrics::Scale(28) : 100;
+constexpr int kDateY = kTimeY + 66;
+constexpr int kRuleY = kPortraitLock ? kDateY + 44 : kDateY + 74;
+constexpr int kExpressionViewWidth =
+    kPortraitLock ? metrics::kDisplayWidth : 600;
+constexpr int kExpressionViewHeight =
+    kPortraitLock ? metrics::Scale(400) : 400;
+constexpr int kExpressionViewX = kPortraitLock ? 0 : 60;
+constexpr int kExpressionViewY = kPortraitLock ? 200 : 218;
 
 struct State {
     lv_obj_t* source_screen = nullptr;
@@ -50,23 +67,35 @@ struct State {
     ExpressionPlayer* expression = nullptr;
     lv_timer_t* clock_timer = nullptr;
     lv_timer_t* off_timer = nullptr;
+    lv_timer_t* input_timer = nullptr;
+    uint32_t last_tap_tick = 0;
     int drag_start_x = 0;
     int drag_offset = 0;
     bool active = false;
     bool black = false;
     bool dragging = false;
     bool invalidation_suspended = false;
+    bool screen_off_pressed = false;
 };
 
 State s_ui;
 
 void ScheduleScreenOff();
 void UnlockToSource();
+void WakeLockScreen();
+void OnScreenOffPressed(lv_event_t* event);
+void OnScreenOffInputTick(lv_timer_t* timer);
+void StopScreenOffInputWatch();
 
 void DeleteTimer(lv_timer_t*& timer) {
     if (timer == nullptr) return;
     lv_timer_delete(timer);
     timer = nullptr;
+}
+
+void StopScreenOffInputWatch() {
+    DeleteTimer(s_ui.input_timer);
+    s_ui.screen_off_pressed = false;
 }
 
 void SuspendDisplayInvalidation() {
@@ -181,28 +210,33 @@ void CreateLockUi() {
                                LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.time_label, lv_color_hex(colors.text),
                                 LV_PART_MAIN);
-    lv_obj_set_pos(s_ui.time_label, metrics::kSystemPadding, 100);
+    lv_obj_set_pos(s_ui.time_label, metrics::kSystemPadding, kTimeY);
 
     s_ui.date_label = lv_label_create(s_ui.lock_overlay);
-    lv_obj_set_style_text_font(s_ui.date_label, fonts::LargeBold(),
-                               LV_PART_MAIN);
+    lv_obj_set_style_text_font(
+        s_ui.date_label,
+        kPortraitLock ? fonts::MediumBold() : fonts::LargeBold(),
+        LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.date_label, lv_color_hex(colors.text),
                                 LV_PART_MAIN);
-    lv_obj_set_pos(s_ui.date_label, metrics::kSystemPadding, 166);
+    lv_obj_set_pos(s_ui.date_label, metrics::kSystemPadding, kDateY);
 
     lv_obj_t* rule = lv_obj_create(s_ui.lock_overlay);
     lv_obj_remove_style_all(rule);
     lv_obj_set_size(rule, 58, 4);
-    lv_obj_set_pos(rule, metrics::kSystemPadding, 240);
+    lv_obj_set_pos(rule, metrics::kSystemPadding, kRuleY);
     lv_obj_set_style_bg_color(rule, lv_color_hex(colors.accent), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, LV_PART_MAIN);
 
     lv_obj_t* expression_host = lv_obj_create(s_ui.lock_overlay);
     lv_obj_remove_style_all(expression_host);
-    lv_obj_set_size(expression_host, 600, 400);
-    lv_obj_set_pos(expression_host, 60, 218);
+    lv_obj_set_size(expression_host, kExpressionViewWidth,
+                    kExpressionViewHeight);
+    lv_obj_set_pos(expression_host, kExpressionViewX, kExpressionViewY);
+    lv_obj_set_style_bg_opa(expression_host, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(expression_host, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(expression_host, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(expression_host, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     s_ui.expression = new ExpressionPlayer(expression_host);
     s_ui.expression->Sleep();
 
@@ -276,6 +310,7 @@ void CreateLockUi() {
 
 void DeleteLockUi() {
     DeleteTimer(s_ui.clock_timer);
+    StopScreenOffInputWatch();
     delete s_ui.expression;
     s_ui.expression = nullptr;
     if (s_ui.lock_overlay != nullptr &&
@@ -312,6 +347,10 @@ void EnterScreenOff() {
     lv_obj_set_style_bg_opa(s_ui.black_overlay, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(s_ui.black_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_ui.black_overlay, LV_OBJ_FLAG_CLICKABLE);
+    s_ui.last_tap_tick = 0;
+    s_ui.screen_off_pressed = false;
+    lv_obj_add_event_cb(s_ui.black_overlay, OnScreenOffPressed,
+                        LV_EVENT_PRESSED, nullptr);
     lv_obj_move_foreground(s_ui.black_overlay);
     lv_refr_now(nullptr);
     s_ui.black = true;
@@ -335,6 +374,7 @@ void EnterScreenOff() {
         }
         s_ui.black_overlay = nullptr;
         s_ui.black = false;
+        StopScreenOffInputWatch();
         if (s_ui.expression != nullptr) {
             s_ui.expression->SetRenderingPaused(false);
         }
@@ -355,6 +395,8 @@ void EnterScreenOff() {
     if (Backlight* backlight = Board::GetInstance().GetBacklight()) {
         backlight->SetBrightness(0, false);
     }
+    StopScreenOffInputWatch();
+    s_ui.input_timer = lv_timer_create(OnScreenOffInputTick, 30, nullptr);
     ESP_LOGI(kTag, "Lock screen off; low-power standby active");
 }
 
@@ -375,24 +417,31 @@ void WakeLockScreen() {
              s_ui.active, s_ui.black);
     if (!s_ui.active || !s_ui.black) return;
 
-    // Temporarily boost before restarting the continuous DSI stream, then
-    // settle back to the visible-lock tier after the lock UI is restored.
+    // Boost before restarting the panel stream. Hold the backlight off until
+    // the lock frame is in the framebuffer so the user does not see the
+    // leftover black overlay.
     PerformanceManager::Get().SetStandbyPhase(
         StandbyPerformancePhase::Awake);
     Board::GetInstance().SetLowPowerStandby(false);
+    if (Backlight* backlight = Board::GetInstance().GetBacklight()) {
+        backlight->SetBrightness(0, false);
+    }
     if (Display* display = Board::GetInstance().GetDisplay()) {
         ESP_LOGI(kTag, "Resuming display panel");
-        display->SetPowerSaveMode(false);
+        display->SetPowerSaveModeChecked(false);
         ESP_LOGI(kTag, "Display panel resume returned");
     }
     Application::GetInstance().SetLowPowerStandby(false);
 
+    ResumeDisplayInvalidation();
     if (s_ui.black_overlay != nullptr &&
         lv_obj_is_valid(s_ui.black_overlay)) {
         lv_obj_delete(s_ui.black_overlay);
     }
     s_ui.black_overlay = nullptr;
     s_ui.black = false;
+    s_ui.last_tap_tick = 0;
+    StopScreenOffInputWatch();
     if (s_ui.expression != nullptr) {
         s_ui.expression->SetRenderingPaused(false);
     }
@@ -401,22 +450,58 @@ void WakeLockScreen() {
     if (s_ui.clock_timer != nullptr) {
         lv_timer_resume(s_ui.clock_timer);
     }
-    // Resume the panel first, then permit drawing and force a clean full-frame
-    // refresh. This keeps RGB888 line/byte phase aligned across screen-off.
-    ResumeDisplayInvalidation();
+    StatusBar::Get().SetLockScreenMode(true);
+    if (s_ui.lock_overlay != nullptr && lv_obj_is_valid(s_ui.lock_overlay)) {
+        lv_obj_invalidate(s_ui.lock_overlay);
+    }
+    if (lv_obj_t* screen = lv_screen_active()) {
+        lv_obj_invalidate(screen);
+    }
+    lv_obj_invalidate(lv_layer_top());
+    lv_refr_now(nullptr);
+
     if (Backlight* backlight = Board::GetInstance().GetBacklight()) {
         backlight->RestoreBrightness();
     }
-    StatusBar::Get().SetLockScreenMode(true);
-    lv_obj_invalidate(s_ui.lock_overlay);
-    lv_refr_now(nullptr);
     PerformanceManager::Get().SetStandbyPhase(
         StandbyPerformancePhase::Dim);
     ScheduleScreenOff();
     ESP_LOGI(kTag,
-             "Side key woke lock screen at configured brightness; "
-             "screen-off in %u ms",
+             "Lock screen woke at configured brightness; screen-off in %u ms",
              static_cast<unsigned>(kScreenOffDelayMs));
+}
+
+void OnWakeFromTouch(void*) { WakeLockScreen(); }
+
+void OnScreenOffPressed(lv_event_t*) {
+    if (!s_ui.active || !s_ui.black) return;
+    s_ui.screen_off_pressed = true;
+    const uint32_t now = lv_tick_get();
+    if (s_ui.last_tap_tick != 0) {
+        const uint32_t elapsed = lv_tick_elaps(s_ui.last_tap_tick);
+        if (elapsed >= kDoubleTapMinMs && elapsed <= kDoubleTapMaxMs) {
+            s_ui.last_tap_tick = 0;
+            lv_async_call(OnWakeFromTouch, nullptr);
+            return;
+        }
+    }
+    s_ui.last_tap_tick = now;
+}
+
+void OnScreenOffInputTick(lv_timer_t*) {
+    if (!s_ui.active || !s_ui.black) return;
+    bool pressed = false;
+    for (lv_indev_t* indev = lv_indev_get_next(nullptr); indev != nullptr;
+         indev = lv_indev_get_next(indev)) {
+        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER &&
+            lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED) {
+            pressed = true;
+            break;
+        }
+    }
+    if (pressed == s_ui.screen_off_pressed) return;
+    s_ui.screen_off_pressed = pressed;
+    if (pressed) OnScreenOffPressed(nullptr);
 }
 
 void UnlockToSource() {
