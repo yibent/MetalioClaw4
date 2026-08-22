@@ -531,14 +531,15 @@ enum class Str : uint16_t {
     LUA_AGENT_RECONNECTING = 512,
     LUA_AGENT_ERROR = 513,
     LUA_AGENT_LAST_RESULT = 514,
-    LUA_AGENT_OUTPUT = 515,
-    LUA_AGENT_HINT = 516,
-    LUA_AGENT_TIMEOUT = 517,
-    LUA_AGENT_CANCELLED = 518,
-    LUA_AGENT_FAILED = 519
+    LUA_AGENT_DONE = 515,
+    LUA_AGENT_OUTPUT = 516,
+    LUA_AGENT_HINT = 517,
+    LUA_AGENT_TIMEOUT = 518,
+    LUA_AGENT_CANCELLED = 519,
+    LUA_AGENT_FAILED = 520
 };
 
-constexpr size_t kStringCount = 520;
+constexpr size_t kStringCount = 521;
 
 struct LocaleInfo {
     Locale id;
@@ -1069,6 +1070,7 @@ inline constexpr const char* kMsgIds[kStringCount] = {
     "连接断开，正在重连",
     "连接失败",
     "最近返回值",
+    "Lua 执行完成",
     "脚本输出",
     "进入聊天后自动连接，等待服务端下发 Lua 脚本",
     "脚本超时",
@@ -1592,6 +1594,7 @@ inline constexpr const char* kStringsZhCN[kStringCount] = {
     "连接断开，正在重连",
     "连接失败",
     "最近返回值",
+    "Lua 执行完成",
     "脚本输出",
     "进入聊天后自动连接，等待服务端下发 Lua 脚本",
     "脚本超时",
@@ -2115,6 +2118,7 @@ inline constexpr const char* kStringsEnUS[kStringCount] = {
     "Disconnected, reconnecting",
     "Connection failed",
     "Last result",
+    "Lua finished",
     "Script output",
     "Connects from chat and waits for Lua scripts",
     "Script timed out",

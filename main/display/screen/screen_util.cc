@@ -13,13 +13,13 @@ bool screen_lvgl_lock(int timeout_ms) {
         return false;
     }
     const int wait_ms = timeout_ms < 0 ? 30000 : timeout_ms;
-    return display->Lock(wait_ms);
+    return display->AcquireLock(wait_ms);
 }
 
 void screen_lvgl_unlock() {
     Display* display = Board::GetInstance().GetDisplay();
     if (display != nullptr) {
-        display->Unlock();
+        display->ReleaseLock();
     }
 }
 
