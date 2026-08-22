@@ -34,21 +34,37 @@ namespace {
 
 constexpr int kHeroTop = metrics::kStatusBarHeight;
 constexpr int kHeroHeight = 470;
+constexpr bool kPortraitHome =
+    metrics::kDisplayHeight > metrics::kDisplayWidth;
+constexpr int kExpressionViewWidth =
+    kPortraitHome ? metrics::kDisplayWidth : metrics::Scale(600);
+constexpr int kExpressionViewHeight = metrics::Scale(400);
+constexpr int kExpressionViewX = kPortraitHome ? 0 : metrics::Scale(60);
+constexpr int kExpressionViewY =
+    kPortraitHome ? 200 : kHeroTop + metrics::Scale(48);
+constexpr int kConversationExpressionY = 80;
+constexpr int kConversationExpressionOffset =
+    kPortraitHome ? kConversationExpressionY - kExpressionViewY : 0;
 constexpr int kMessageWidth = metrics::Scale(540);
 constexpr int kMessageLineSpace = metrics::Scale(10);
 constexpr int kMessageFirstScrollDelayMs = 1600;
 constexpr int kMessageScrollPeriodMs = 1000;
 constexpr int kCarouselHeight = metrics::Scale(208);
-constexpr int kCarouselTop = metrics::kDisplayHeight - kCarouselHeight;
+constexpr int kCarouselIdleLift = kPortraitHome ? 50 : 0;
+constexpr int kCarouselTop =
+    metrics::kDisplayHeight - kCarouselHeight - kCarouselIdleLift;
 constexpr int kCarouselStep = metrics::Scale(180);
 constexpr int kCarouselItemWidth = metrics::Scale(168);
+constexpr int kCarouselItemHeight = metrics::Scale(178);
 constexpr int kCarouselFocusX =
     (metrics::kDisplayWidth - kCarouselItemWidth) / 2;
 constexpr int kCarouselNameInset = metrics::Scale(8);
 constexpr int kCarouselNameWidth =
     kCarouselItemWidth - kCarouselNameInset * 2;
 constexpr int kCarouselNameY = metrics::Scale(78);
-constexpr int kCarouselNameCompactArrowY = metrics::Scale(135);
+constexpr int kCarouselArrowGap = metrics::Scale(8);
+constexpr int kCarouselCurveBase = metrics::Scale(49);
+constexpr int kCarouselCurveDrop = metrics::Scale(42);
 constexpr int kCarouselEdgeWidth = metrics::Scale(92);
 constexpr int kCarouselCenterX = metrics::kDisplayWidth / 2;
 constexpr int kCarouselDetentSize = 8;
@@ -65,7 +81,8 @@ constexpr float kSnapDurationMs = 240.0f;
 constexpr uint32_t kConversationLayoutDurationMs = 750;
 constexpr int kConversationMessageOffset = 466;
 constexpr int kConversationRuleOffset = 281;
-constexpr int kConversationCarouselOffset = kCarouselHeight + 24;
+constexpr int kConversationCarouselOffset =
+    kCarouselHeight + 24 + kCarouselIdleLift;
 constexpr uint32_t kStandbyChromeDurationMs = 260;
 constexpr int kStandbyTopOffset = -kHeroHeight;
 constexpr int kStandbyBottomOffset = 230;
@@ -80,6 +97,16 @@ static_assert(kCarouselParallaxPixels < kMessageParallaxPixels &&
 
 int MessageViewportHeight() {
     return fonts::LargeBold()->line_height * 2 + kMessageLineSpace;
+}
+
+int MessageViewY() {
+    return kHeroTop + metrics::Scale(28);
+}
+
+constexpr int kEditorialRuleGap = 10;
+
+int IdleEditorialRuleY() {
+    return MessageViewY() + MessageViewportHeight() + kEditorialRuleGap;
 }
 
 bool IsAsciiAlphaNumeric(char value) {
@@ -527,6 +554,9 @@ void AnimateConversationLayout(HomeState* state, bool active) {
     SetConversationExitHitArea(state, active);
     SetCarouselRenderingHidden(state, false);
     SetCarouselInteractive(state, false);
+    AnimateTranslateY(state->expression_parallax.object,
+                      active ? kConversationExpressionOffset : 0,
+                      kConversationLayoutDurationMs);
     AnimateTranslateY(state->message_viewport,
                       active ? kConversationMessageOffset : 0,
                       kConversationLayoutDurationMs);
@@ -750,19 +780,48 @@ int CircularDistance(const HomeState* state, int index, int focused_index) {
     return distance;
 }
 
+uint32_t MixHex(uint32_t from, uint32_t toward, int amount) {
+    const int t = std::clamp(amount, 0, 256);
+    auto channel = [t, from, toward](int shift) {
+        const int a = static_cast<int>((from >> shift) & 0xFFu);
+        const int b = static_cast<int>((toward >> shift) & 0xFFu);
+        return (a * (256 - t) + b * t) >> 8;
+    };
+    return (static_cast<uint32_t>(channel(16)) << 16) |
+           (static_cast<uint32_t>(channel(8)) << 8) |
+           static_cast<uint32_t>(channel(0));
+}
+
+uint32_t FadedAccent(const ThemeColors& colors) {
+    const bool dark =
+        Theme::Get().appearance_mode() == AppearanceMode::Dark;
+    const uint32_t wash = dark ? colors.text : colors.background;
+    return MixHex(colors.accent, wash, 128);
+}
+
 void ApplyFocus(HomeState* state, int focused_index) {
     if (state == nullptr) return;
     state->focused_index = WrapIndex(state, focused_index);
     const auto& colors = Theme::Get().colors();
+    const uint32_t faded = FadedAccent(colors);
     for (size_t index = 0; index < state->apps.size(); ++index) {
         ArcItem& item = state->apps[index];
         const bool focused = static_cast<int>(index) == state->focused_index;
-        const uint32_t primary = focused ? colors.accent : colors.text;
+        const uint32_t primary = focused ? colors.accent : faded;
         lv_obj_set_style_bg_color(item.rule, lv_color_hex(primary), LV_PART_MAIN);
         lv_obj_set_style_text_color(item.number, lv_color_hex(primary), LV_PART_MAIN);
         lv_obj_set_style_text_color(item.name, lv_color_hex(colors.text), LV_PART_MAIN);
         lv_obj_set_style_text_color(item.arrow, lv_color_hex(primary), LV_PART_MAIN);
     }
+}
+
+int CarouselCurveY(float distance) {
+    int curve_y = static_cast<int>(std::lround(
+        static_cast<float>(kCarouselCurveBase) -
+        static_cast<float>(kCarouselCurveDrop) *
+            std::pow(distance, 1.55f)));
+    const int max_y = std::max(0, kCarouselHeight - kCarouselItemHeight);
+    return std::clamp(curve_y, 0, max_y);
 }
 
 void ApplyCarouselGeometry(HomeState* state) {
@@ -777,9 +836,7 @@ void ApplyCarouselGeometry(HomeState* state) {
         const float distance = std::min(
             1.0f, std::abs(static_cast<float>(item_center - kCarouselCenterX)) /
                       (kCarouselStep * 2.0f));
-        const int curve_y = static_cast<int>(std::lround(
-            49.0f - 42.0f * std::pow(distance, 1.55f)));
-        lv_obj_set_pos(item.button, x, curve_y);
+        lv_obj_set_pos(item.button, x, CarouselCurveY(distance));
     }
     for (size_t index = 0; index < state->half_detents.size(); ++index) {
         const int leading_order = CircularDistance(
@@ -792,8 +849,7 @@ void ApplyCarouselGeometry(HomeState* state) {
         const float distance = std::min(
             1.0f, std::abs(static_cast<float>(center_x - kCarouselCenterX)) /
                       (kCarouselStep * 2.0f));
-        const int curve_y = static_cast<int>(std::lround(
-            49.0f - 42.0f * std::pow(distance, 1.55f)));
+        const int curve_y = CarouselCurveY(distance);
         lv_obj_set_pos(
             state->half_detents[index],
             center_x - kCarouselDetentSize / 2 + kCarouselDetentVisualX,
@@ -1285,8 +1341,8 @@ ArcItem CreateArcItem(lv_obj_t* parent, const AppDefinition& app,
     ArcItem item;
     item.button = lv_button_create(parent);
     lv_obj_remove_style_all(item.button);
-    lv_obj_set_size(item.button, kCarouselItemWidth, metrics::Scale(178));
-    lv_obj_set_pos(item.button, kCarouselFocusX, metrics::Scale(49));
+    lv_obj_set_size(item.button, kCarouselItemWidth, kCarouselItemHeight);
+    lv_obj_set_pos(item.button, kCarouselFocusX, kCarouselCurveBase);
     lv_obj_set_style_bg_opa(item.button, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_opa(item.button, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(item.button, 0, LV_PART_MAIN);
@@ -1325,19 +1381,29 @@ ArcItem CreateArcItem(lv_obj_t* parent, const AppDefinition& app,
         regular_name_size.y > regular_name_font->line_height;
     const lv_font_t* name_font =
         compact_name ? fonts::SmallBold() : regular_name_font;
+    lv_point_t compact_name_size{};
+    lv_text_get_size(&compact_name_size, app.name.c_str(), name_font, 0, 0,
+                     LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    const bool two_line_name =
+        compact_name && compact_name_size.x > kCarouselNameWidth;
+    const int name_height =
+        name_font->line_height * (two_line_name ? 2 : 1);
     lv_obj_set_style_text_font(item.name, name_font, LV_PART_MAIN);
     lv_obj_set_style_text_color(item.name, lv_color_hex(colors.text), LV_PART_MAIN);
     lv_label_set_long_mode(item.name, LV_LABEL_LONG_DOT);
-    lv_obj_set_size(item.name, kCarouselNameWidth,
-                    name_font->line_height * (compact_name ? 2 : 1));
+    lv_obj_set_size(item.name, kCarouselNameWidth, name_height);
     lv_obj_set_pos(item.name, kCarouselNameInset, kCarouselNameY);
 
     item.arrow = lv_label_create(item.button);
     lv_label_set_text(item.arrow, FONT_AWESOME_ARROW_RIGHT);
     lv_obj_set_style_text_font(item.arrow, fonts::Icon(), LV_PART_MAIN);
     lv_obj_set_style_text_color(item.arrow, lv_color_hex(colors.text), LV_PART_MAIN);
-    lv_obj_set_pos(item.arrow, 8,
-                   compact_name ? kCarouselNameCompactArrowY : 120);
+    const int arrow_height =
+        std::max(static_cast<int>(fonts::Icon()->line_height), 20);
+    int arrow_y = kCarouselNameY + name_height + kCarouselArrowGap;
+    arrow_y = std::min(arrow_y, kCarouselItemHeight - arrow_height);
+    arrow_y = std::max(arrow_y, 0);
+    lv_obj_set_pos(item.arrow, 8, arrow_y);
     return item;
 }
 
@@ -1371,12 +1437,14 @@ lv_obj_t* Renderer::Create(RendererActions actions) {
 
     lv_obj_t* expression = lv_obj_create(state->root);
     lv_obj_remove_style_all(expression);
-    // A 600x400 cropped surface preserves the 1.5x expression scale without
-    // allocating the unused top and bottom of a full 600x600 A8 buffer.
-    lv_obj_set_size(expression, metrics::Scale(600), metrics::Scale(400));
-    lv_obj_set_pos(expression, metrics::Scale(60), kHeroTop + metrics::Scale(48));
+    // Keep the 600x400 A8 buffer at native size. On 480x800 the view is
+    // full-bleed so the 40px side margins do not show as black bars.
+    lv_obj_set_size(expression, kExpressionViewWidth, kExpressionViewHeight);
+    lv_obj_set_pos(expression, kExpressionViewX, kExpressionViewY);
+    lv_obj_set_style_bg_opa(expression, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(expression, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(expression, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(expression, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     state->expression_parallax.object = expression;
     state->expression = new ExpressionPlayer(expression);
 
@@ -1384,8 +1452,7 @@ lv_obj_t* Renderer::Create(RendererActions actions) {
     lv_obj_remove_style_all(state->message_viewport);
     lv_obj_set_size(state->message_viewport, kMessageWidth,
                     MessageViewportHeight());
-    lv_obj_set_pos(state->message_viewport, metrics::Scale(34),
-                    kHeroTop + metrics::Scale(28));
+    lv_obj_set_pos(state->message_viewport, metrics::Scale(34), MessageViewY());
     lv_obj_remove_flag(state->message_viewport, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(state->message_viewport, LV_OBJ_FLAG_CLICKABLE);
     state->message_parallax.object = state->message_viewport;
@@ -1405,7 +1472,7 @@ lv_obj_t* Renderer::Create(RendererActions actions) {
     lv_obj_remove_style_all(state->editorial_rule);
     lv_obj_set_size(state->editorial_rule, metrics::Scale(58), metrics::Scale(4));
     lv_obj_set_pos(state->editorial_rule, metrics::Scale(35),
-                    kHeroTop + metrics::Scale(190));
+                    IdleEditorialRuleY());
     lv_obj_set_style_bg_color(state->editorial_rule,
                               lv_color_hex(colors.accent), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(state->editorial_rule, LV_OPA_COVER, LV_PART_MAIN);
