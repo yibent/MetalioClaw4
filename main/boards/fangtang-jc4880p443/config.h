@@ -22,6 +22,7 @@
 
 #define BUILTIN_LED_GPIO        GPIO_NUM_26
 #define BOOT_BUTTON_GPIO        GPIO_NUM_35
+#define POWER_BUTTON_PIN        GPIO_NUM_NC 
 
 #define MIPI_DPI_PX_FORMAT         (LCD_COLOR_PIXEL_FORMAT_RGB565)
 #define DISPLAY_SWAP_XY false
