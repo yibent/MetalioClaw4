@@ -26,7 +26,7 @@ typedef uint32_t lua_runtime_job_id_t;
 #define LUA_RUNTIME_HTTP_DEFAULT_TIMEOUT_MS 15000u
 #define LUA_RUNTIME_HTTP_MAX_TIMEOUT_MS 60000u
 #define LUA_RUNTIME_HTTP_DEFAULT_MAX_BODY (64u * 1024u)
-#define LUA_RUNTIME_HTTP_HARD_MAX_BODY (256u * 1024u)
+#define LUA_RUNTIME_HTTP_HARD_MAX_BODY (512u * 1024u)
 #define LUA_RUNTIME_HTTP_MAX_REQUEST_BODY (64u * 1024u)
 #define LUA_RUNTIME_HTTP_MAX_HEADERS 32u
 #define LUA_RUNTIME_HTTP_MAX_HEADER_SIZE 256u
@@ -80,6 +80,9 @@ typedef void (*lua_runtime_job_callback_t)(const lua_runtime_job_info_t* info, c
 typedef esp_err_t (*lua_runtime_audio_play_callback_t)(const char* source, bool loop,
                                                        uint8_t volume, uint32_t* handle,
                                                        void* user_ctx);
+typedef esp_err_t (*lua_runtime_audio_play_bytes_callback_t)(const void* data, size_t len,
+                                                             bool loop, uint8_t volume,
+                                                             uint32_t* handle, void* user_ctx);
 typedef esp_err_t (*lua_runtime_audio_stop_callback_t)(uint32_t handle, void* user_ctx);
 typedef esp_err_t (*lua_runtime_audio_simple_callback_t)(void* user_ctx);
 typedef bool (*lua_runtime_audio_is_playing_callback_t)(uint32_t handle, void* user_ctx);
@@ -137,6 +140,8 @@ esp_err_t lua_runtime_set_audio_backend(lua_runtime_audio_play_callback_t play,
                                         lua_runtime_audio_simple_callback_t stop_all,
                                         lua_runtime_audio_is_playing_callback_t is_playing,
                                         void* user_ctx);
+esp_err_t lua_runtime_set_audio_bytes_backend(lua_runtime_audio_play_bytes_callback_t play_bytes,
+                                              void* user_ctx);
 esp_err_t lua_runtime_set_ui_backend(lua_runtime_ui_lock_callback_t lock,
                                      lua_runtime_ui_unlock_callback_t unlock, void* user_ctx);
 esp_err_t lua_runtime_set_http_backend(lua_runtime_http_request_callback_t request, void* user_ctx);

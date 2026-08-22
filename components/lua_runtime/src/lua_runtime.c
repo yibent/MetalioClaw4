@@ -62,6 +62,7 @@ static lua_runtime_job_id_t s_next_id = 1;
 static lua_runtime_job_callback_t s_callback;
 static void *s_callback_ctx;
 static lua_runtime_audio_play_callback_t s_audio_play;
+static lua_runtime_audio_play_bytes_callback_t s_audio_play_bytes;
 static lua_runtime_audio_stop_callback_t s_audio_stop;
 static lua_runtime_audio_simple_callback_t s_audio_stop_all;
 static lua_runtime_audio_is_playing_callback_t s_audio_is_playing;
@@ -271,6 +272,46 @@ static int l_audio_play(lua_State *state) {
     return 1;
 }
 
+static int l_audio_play_bytes(lua_State *state) {
+    size_t len = 0;
+    const char *data = luaL_checklstring(state, 1, &len);
+    runtime_audio_context_t *context = get_audio_context(state);
+    if (s_audio_is_playing) {
+        for (int i = 0; i < LUA_RUNTIME_AUDIO_HANDLES; ++i) {
+            if (context->handles[i] && !s_audio_is_playing(context->handles[i], s_audio_ctx))
+                context->handles[i] = 0;
+        }
+    }
+    int free_slot = find_audio_handle(context, 0);
+    if (free_slot < 0)
+        return luaL_error(state, "audio handle limit reached");
+    bool has_options = !lua_isnoneornil(state, 2);
+    if (has_options)
+        luaL_checktype(state, 2, LUA_TTABLE);
+    bool loop = false;
+    lua_Integer volume = 100;
+    if (has_options) {
+        lua_getfield(state, 2, "loop");
+        loop = lua_toboolean(state, -1);
+        lua_pop(state, 1);
+        lua_getfield(state, 2, "volume");
+        volume = lua_isnumber(state, -1) ? (lua_Integer)lua_tonumber(state, -1) : 100;
+        lua_pop(state, 1);
+    }
+    if (volume < 0 || volume > 100)
+        return luaL_argerror(state, 2, "volume must be between 0 and 100");
+    if (!s_audio_play_bytes)
+        return luaL_error(state, "audio.play_bytes backend is not registered");
+    uint32_t handle = 0;
+    esp_err_t err =
+        s_audio_play_bytes(data, len, loop, (uint8_t)volume, &handle, s_audio_ctx);
+    if (err != ESP_OK)
+        return luaL_error(state, "audio.play_bytes failed: %s", esp_err_to_name(err));
+    context->handles[free_slot] = handle;
+    lua_pushinteger(state, handle);
+    return 1;
+}
+
 static int l_audio_stop(lua_State *state) {
     uint32_t handle = (uint32_t)luaL_checkinteger(state, 1);
     runtime_audio_context_t *context = get_audio_context(state);
@@ -332,6 +373,7 @@ static int luaopen_audio(lua_State *state) {
     lua_pop(state, 1);
     static const luaL_Reg functions[] = {
         {"play", l_audio_play},
+        {"play_bytes", l_audio_play_bytes},
         {"stop", l_audio_stop},
         {"stop_all", l_audio_stop_all},
         {"is_playing", l_audio_is_playing},
@@ -739,6 +781,7 @@ esp_err_t lua_runtime_init(void) {
     s_callback = NULL;
     s_callback_ctx = NULL;
     s_audio_play = NULL;
+    s_audio_play_bytes = NULL;
     s_audio_stop = NULL;
     s_audio_stop_all = NULL;
     s_audio_is_playing = NULL;
@@ -985,6 +1028,20 @@ esp_err_t lua_runtime_set_audio_backend(lua_runtime_audio_play_callback_t play,
     s_audio_stop_all = stop_all;
     s_audio_is_playing = is_playing;
     s_audio_ctx = user_ctx;
+    xSemaphoreGive(s_lock);
+    return ESP_OK;
+}
+
+esp_err_t lua_runtime_set_audio_bytes_backend(lua_runtime_audio_play_bytes_callback_t play_bytes,
+                                              void *user_ctx) {
+    if (!s_initialized)
+        return ESP_ERR_INVALID_STATE;
+    if (!play_bytes)
+        return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_audio_play_bytes = play_bytes;
+    if (user_ctx)
+        s_audio_ctx = user_ctx;
     xSemaphoreGive(s_lock);
     return ESP_OK;
 }

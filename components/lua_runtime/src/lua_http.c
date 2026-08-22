@@ -168,7 +168,7 @@ static int l_http_request(lua_State* state) {
     lua_Integer max_body = luaL_optinteger(state, -1, (lua_Integer)LUA_RUNTIME_HTTP_DEFAULT_MAX_BODY);
     lua_pop(state, 1);
     if (max_body <= 0 || max_body > (lua_Integer)LUA_RUNTIME_HTTP_HARD_MAX_BODY)
-        return luaL_argerror(state, 1, "max_body must be between 1 and 262144");
+        return luaL_argerror(state, 1, "max_body must be between 1 and 524288");
 
     lua_getfield(state, 1, "body");
     const char* body = NULL;

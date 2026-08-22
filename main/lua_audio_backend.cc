@@ -13,7 +13,7 @@
 
 namespace {
 
-constexpr size_t kMaxLuaSoundBytes = 256 * 1024;
+constexpr size_t kMaxLuaSoundBytes = 512 * 1024;
 std::atomic<uint32_t> s_next_handle{1};
 
 esp_err_t PlayLuaSound(const char* source, bool loop, uint8_t volume, uint32_t* handle,
@@ -88,9 +88,28 @@ bool LuaSoundIsPlaying(uint32_t handle, void* user_ctx) {
     return Application::GetInstance().GetAudioService().IsSoundEffectPlaying(handle);
 }
 
+esp_err_t PlayLuaBytes(const void* data, size_t len, bool loop, uint8_t volume, uint32_t* handle,
+                       void* user_ctx) {
+    (void)user_ctx;
+    if (!data || !handle || len == 0)
+        return ESP_ERR_INVALID_ARG;
+    if (len > kMaxLuaSoundBytes)
+        return ESP_ERR_INVALID_SIZE;
+    uint32_t sound_handle = s_next_handle.fetch_add(1);
+    if (sound_handle == 0)
+        sound_handle = s_next_handle.fetch_add(1);
+    bool queued = Application::GetInstance().GetAudioService().PlayWavSoundEffect(
+        data, len, sound_handle, volume, loop);
+    if (!queued)
+        return ESP_ERR_INVALID_RESPONSE;
+    *handle = sound_handle;
+    return ESP_OK;
+}
+
 }  // namespace
 
 void RegisterLuaAudioBackend() {
     lua_runtime_set_audio_backend(PlayLuaSound, StopLuaSound, StopAllLuaSounds,
                                   LuaSoundIsPlaying, nullptr);
+    lua_runtime_set_audio_bytes_backend(PlayLuaBytes, nullptr);
 }

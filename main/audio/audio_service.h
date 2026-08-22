@@ -124,6 +124,8 @@ public:
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
     bool PlaySoundEffect(const std::string_view& sound, uint32_t handle, uint8_t volume, bool loop);
+    bool PlayWavSoundEffect(const void* data, size_t size, uint32_t handle, uint8_t volume,
+                            bool loop);
     void StopSoundEffect(uint32_t handle);
     void StopAllSoundEffects();
     bool IsSoundEffectPlaying(uint32_t handle);
@@ -187,6 +189,7 @@ private:
     void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm);
     void SetDecodeSampleRate(int sample_rate, int frame_duration);
     bool DecodeSoundEffect(const std::string_view& ogg, std::vector<int16_t>& pcm);
+    bool DecodeWavPcm(const uint8_t* data, size_t size, std::vector<int16_t>& pcm);
     void MixSoundEffects(std::vector<int16_t>& pcm);
     void CheckAndUpdateAudioPowerState();
 };

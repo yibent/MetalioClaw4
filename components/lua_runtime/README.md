@@ -82,6 +82,7 @@ local jump = audio.play("/sdcard/game/jump.ogg", { volume = 80 })
 audio.is_playing(jump)
 audio.stop(jump)
 audio.stop_all()
+local handle = audio.play_bytes(wav_bytes, { volume = 80 })
 ```
 
 The current application backend accepts OGG/Opus files as short one-shot

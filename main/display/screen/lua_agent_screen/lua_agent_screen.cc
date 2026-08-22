@@ -23,7 +23,10 @@
 #include "freertos/task.h"
 
 #include "api_endpoints.h"
+#include "application.h"
+#include "audio_service.h"
 #include "board.h"
+#include "protocol.h"
 #include "config.h"
 #include "home_screen/home_screen.h"
 #include "lua_runtime.h"
@@ -31,6 +34,8 @@
 #include "settings.h"
 #include "system_info.h"
 #include <web_socket.h>
+
+#include <vector>
 
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_30_4);
@@ -52,6 +57,11 @@ constexpr uint32_t kBackoffMaxMs = 15000;
 constexpr int kWorkerStack = 32 * 1024;
 constexpr int kIdMax = 64;
 constexpr int kEntryMax = 32;
+constexpr size_t kMaxSpeakBytes = 512 * 1024;
+constexpr size_t kMaxSpeakFrames = 1200;
+constexpr size_t kMaxOpusPacketBytes = 1500;
+constexpr int kDefaultSpeakSampleRate = 16000;
+constexpr int kDefaultSpeakFrameDurationMs = 60;
 
 constexpr int32_t kPanelW = DISPLAY_WIDTH;
 constexpr int32_t kPanelH = DISPLAY_HEIGHT;
@@ -112,6 +122,20 @@ std::atomic<bool> s_stop{false};
 std::atomic<bool> s_worker_running{false};
 std::atomic<bool> s_connected{false};
 std::atomic<bool> s_job_active{false};
+std::atomic<bool> s_speak_active{false};
+
+std::mutex s_speak_mutex;
+bool s_speak_collecting = false;
+bool s_speak_wait = true;
+bool s_speak_saw_busy = false;
+int s_speak_sample_rate = kDefaultSpeakSampleRate;
+int s_speak_frame_duration = kDefaultSpeakFrameDurationMs;
+size_t s_speak_expected = 0;
+size_t s_speak_feed_index = 0;
+size_t s_speak_payload_bytes = 0;
+uint32_t s_speak_handle = 0;
+uint32_t s_speak_duration_ms = 0;
+std::vector<std::vector<uint8_t>> s_speak_frames;
 
 QueueHandle_t s_msg_queue;
 lua_runtime_job_id_t s_job_id;
@@ -243,6 +267,7 @@ cJSON* BuildHelloDevice() {
     cJSON_AddItemToArray(caps, cJSON_CreateString("audio"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("http"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("speech"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("tts"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("device"));
     if (board.GetCamera() != nullptr)
         cJSON_AddItemToArray(caps, cJSON_CreateString("camera"));
@@ -295,6 +320,7 @@ bool SendHello() {
     cJSON_AddItemToArray(caps, cJSON_CreateString("audio"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("http"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("speech"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("tts"));
     cJSON_AddItemToArray(caps, cJSON_CreateString("device"));
     if (board.GetCamera() != nullptr)
         cJSON_AddItemToArray(caps, cJSON_CreateString("camera"));
@@ -479,6 +505,239 @@ void FinishJobIfDone() {
     }
 }
 
+void ResetSpeakLocked() {
+    s_speak_collecting = false;
+    s_speak_wait = true;
+    s_speak_saw_busy = false;
+    s_speak_expected = 0;
+    s_speak_feed_index = 0;
+    s_speak_payload_bytes = 0;
+    s_speak_handle = 0;
+    s_speak_duration_ms = 0;
+    s_speak_sample_rate = kDefaultSpeakSampleRate;
+    s_speak_frame_duration = kDefaultSpeakFrameDurationMs;
+    s_speak_frames.clear();
+}
+
+void ResetSpeak() {
+    std::lock_guard<std::mutex> lock(s_speak_mutex);
+    ResetSpeakLocked();
+}
+
+void StopSpeakAudio() {
+    auto& audio = Application::GetInstance().GetAudioService();
+    audio.ResetDecoder();
+    audio.StopAllSoundEffects();
+}
+
+void CompleteSpeak(bool ok, const char* status, const char* value_json, uint32_t duration_ms,
+                   const char* code = nullptr, const char* message = nullptr) {
+    if (ok) {
+        SendJobResult(s_current_req_id, LUA_RUNTIME_JOB_DONE, "", false, value_json, false,
+                      duration_ms);
+    } else {
+        SendImmediateResult(s_current_req_id, status, code ? code : status,
+                            message ? message : status);
+    }
+    s_speak_active.store(false, std::memory_order_release);
+    s_current_req_id[0] = '\0';
+    ResetSpeak();
+    if (s_connected.load(std::memory_order_acquire))
+        SetSnap(ConnState::Waiting, "已连接，等待任务");
+}
+
+bool IsOpusSampleRate(int sample_rate) {
+    return sample_rate == 8000 || sample_rate == 12000 || sample_rate == 16000 ||
+           sample_rate == 24000 || sample_rate == 48000;
+}
+
+void HandleSpeak(cJSON* root) {
+    const cJSON* id_item = cJSON_GetObjectItem(root, "id");
+    const char* id = cJSON_IsString(id_item) ? id_item->valuestring : "";
+    if (!id[0]) {
+        SendError("", "invalid", "speak requires id");
+        return;
+    }
+    if (s_job_active.load(std::memory_order_acquire) ||
+        s_speak_active.load(std::memory_order_acquire)) {
+        SendImmediateResult(id, "rejected", "busy", "a job is already running");
+        return;
+    }
+    const cJSON* format_item = cJSON_GetObjectItem(root, "format");
+    const char* format = cJSON_IsString(format_item) ? format_item->valuestring : "opus";
+    if (strcmp(format, "opus") != 0) {
+        ResetSpeak();
+        SendImmediateResult(id, "rejected", "invalid", "speak only supports opus");
+        return;
+    }
+    const cJSON* count_item = cJSON_GetObjectItem(root, "frame_count");
+    if (!cJSON_IsNumber(count_item) || count_item->valuedouble <= 0) {
+        ResetSpeak();
+        SendImmediateResult(id, "rejected", "invalid", "speak requires frame_count");
+        return;
+    }
+    const size_t expected = static_cast<size_t>(count_item->valuedouble);
+    if (expected > kMaxSpeakFrames) {
+        ResetSpeak();
+        SendImmediateResult(id, "rejected", "too_large", "too many opus frames");
+        return;
+    }
+    int sample_rate = kDefaultSpeakSampleRate;
+    const cJSON* sample_rate_item = cJSON_GetObjectItem(root, "sample_rate");
+    if (cJSON_IsNumber(sample_rate_item) && sample_rate_item->valuedouble > 0)
+        sample_rate = static_cast<int>(sample_rate_item->valuedouble);
+    if (!IsOpusSampleRate(sample_rate)) {
+        ResetSpeak();
+        SendImmediateResult(id, "rejected", "invalid", "unsupported opus sample_rate");
+        return;
+    }
+    int frame_duration = kDefaultSpeakFrameDurationMs;
+    const cJSON* frame_item = cJSON_GetObjectItem(root, "frame_duration");
+    if (cJSON_IsNumber(frame_item) && frame_item->valuedouble > 0)
+        frame_duration = static_cast<int>(frame_item->valuedouble);
+    if (frame_duration != 20 && frame_duration != 40 && frame_duration != 60) {
+        ResetSpeak();
+        SendImmediateResult(id, "rejected", "invalid", "unsupported opus frame_duration");
+        return;
+    }
+    int volume = 80;
+    const cJSON* volume_item = cJSON_GetObjectItem(root, "volume");
+    if (cJSON_IsNumber(volume_item))
+        volume = static_cast<int>(volume_item->valuedouble);
+    if (volume < 0)
+        volume = 0;
+    if (volume > 100)
+        volume = 100;
+    bool wait = true;
+    const cJSON* wait_item = cJSON_GetObjectItem(root, "wait");
+    if (cJSON_IsBool(wait_item))
+        wait = cJSON_IsTrue(wait_item);
+    uint32_t duration_ms = static_cast<uint32_t>(expected * frame_duration);
+    const cJSON* duration_item = cJSON_GetObjectItem(root, "duration_ms");
+    if (cJSON_IsNumber(duration_item) && duration_item->valuedouble > 0)
+        duration_ms = static_cast<uint32_t>(duration_item->valuedouble);
+
+    {
+        std::lock_guard<std::mutex> lock(s_speak_mutex);
+        s_speak_expected = expected;
+        s_speak_collecting = true;
+        s_speak_wait = wait;
+        s_speak_duration_ms = duration_ms;
+        s_speak_sample_rate = sample_rate;
+        s_speak_frame_duration = frame_duration;
+        s_speak_handle = 0;
+        s_speak_feed_index = 0;
+        s_speak_saw_busy = false;
+        if (s_speak_frames.size() > expected)
+            s_speak_frames.resize(expected);
+    }
+    strlcpy(s_current_req_id, id, sizeof(s_current_req_id));
+    s_job_started_us = esp_timer_get_time();
+    s_speak_active.store(true, std::memory_order_release);
+    SetJobFields(id, "", "");
+    SetSnap(ConnState::Running, "正在播报", id);
+    ESP_LOGI(TAG, "speak id=%s frames=%u rate=%d dur=%d volume=%d", id, (unsigned)expected,
+             sample_rate, frame_duration, volume);
+}
+
+void FinishSpeakIfReady() {
+    if (!s_speak_active.load(std::memory_order_acquire))
+        return;
+
+    auto& audio = Application::GetInstance().GetAudioService();
+    const uint32_t elapsed =
+        (uint32_t)((esp_timer_get_time() - s_job_started_us) / 1000);
+
+    bool wait = true;
+    uint32_t duration_ms = 0;
+    bool start_feed = false;
+    bool incomplete = false;
+    {
+        std::lock_guard<std::mutex> lock(s_speak_mutex);
+        wait = s_speak_wait;
+        duration_ms = s_speak_duration_ms;
+        if (s_speak_handle == 0 && s_speak_collecting && s_speak_expected > 0 &&
+            s_speak_frames.size() >= s_speak_expected) {
+            s_speak_collecting = false;
+            s_speak_handle = 1;
+            s_speak_feed_index = 0;
+            start_feed = true;
+        } else if (s_speak_handle == 0 && s_speak_collecting && s_speak_expected > 0 &&
+                   elapsed > 8000) {
+            incomplete = true;
+        }
+    }
+
+    if (incomplete) {
+        StopSpeakAudio();
+        CompleteSpeak(false, "failed", "null", elapsed, "incomplete", "opus frames incomplete");
+        return;
+    }
+
+    if (start_feed)
+        audio.ResetDecoder();
+
+    while (s_speak_handle != 0) {
+        std::vector<uint8_t> frame;
+        int sample_rate = kDefaultSpeakSampleRate;
+        int frame_duration = kDefaultSpeakFrameDurationMs;
+        {
+            std::lock_guard<std::mutex> lock(s_speak_mutex);
+            if (s_speak_feed_index >= s_speak_expected ||
+                s_speak_feed_index >= s_speak_frames.size())
+                break;
+            frame = s_speak_frames[s_speak_feed_index];
+            sample_rate = s_speak_sample_rate;
+            frame_duration = s_speak_frame_duration;
+        }
+        auto packet = std::make_unique<AudioStreamPacket>();
+        packet->sample_rate = sample_rate;
+        packet->frame_duration = frame_duration;
+        packet->payload = std::move(frame);
+        if (!audio.PushPacketToDecodeQueue(std::move(packet), false))
+            break;
+        {
+            std::lock_guard<std::mutex> lock(s_speak_mutex);
+            s_speak_feed_index++;
+            if (s_speak_feed_index >= s_speak_expected)
+                s_speak_frames.clear();
+        }
+    }
+
+    bool all_fed = false;
+    {
+        std::lock_guard<std::mutex> lock(s_speak_mutex);
+        wait = s_speak_wait;
+        duration_ms = s_speak_duration_ms;
+        all_fed = s_speak_handle != 0 && s_speak_feed_index >= s_speak_expected;
+    }
+    if (!all_fed)
+        return;
+
+    if (!wait) {
+        char value[96];
+        snprintf(value, sizeof(value), "{\"success\":true,\"durationMs\":%u}", duration_ms);
+        CompleteSpeak(true, "done", value, duration_ms);
+        return;
+    }
+
+    const uint32_t limit =
+        (duration_ms ? duration_ms : s_speak_expected * s_speak_frame_duration) + 1500;
+    const bool idle = audio.IsIdle();
+    if (!idle) {
+        s_speak_saw_busy = true;
+        if (elapsed < limit)
+            return;
+    } else if (!s_speak_saw_busy && elapsed < 250) {
+        return;
+    }
+
+    char value[96];
+    snprintf(value, sizeof(value), "{\"success\":true,\"durationMs\":%u}",
+             duration_ms ? duration_ms : elapsed);
+    CompleteSpeak(true, "done", value, elapsed);
+}
+
 void HandleRun(cJSON* root) {
     const cJSON* id_item = cJSON_GetObjectItem(root, "id");
     const char* id = cJSON_IsString(id_item) ? id_item->valuestring : "";
@@ -486,7 +745,8 @@ void HandleRun(cJSON* root) {
         SendError("", "invalid", "run requires id");
         return;
     }
-    if (s_job_active.load(std::memory_order_acquire)) {
+    if (s_job_active.load(std::memory_order_acquire) ||
+        s_speak_active.load(std::memory_order_acquire)) {
         SendImmediateResult(id, "rejected", "busy", "a job is already running");
         return;
     }
@@ -573,6 +833,17 @@ void HandleCancel(cJSON* root) {
         SendError("", "invalid", "cancel requires id");
         return;
     }
+    if (s_speak_active.load(std::memory_order_acquire) &&
+        strcmp(s_current_req_id, id) == 0) {
+        StopSpeakAudio();
+        SendJobResult(id, LUA_RUNTIME_JOB_STOPPED, "", false, "null", false, 0);
+        s_speak_active.store(false, std::memory_order_release);
+        s_current_req_id[0] = '\0';
+        ResetSpeak();
+        if (s_connected.load(std::memory_order_acquire))
+            SetSnap(ConnState::Waiting, "已连接，等待任务");
+        return;
+    }
     if (!s_job_active.load(std::memory_order_acquire) ||
         strcmp(s_current_req_id, id) != 0) {
         SendError(id, "not_found", "no matching running job");
@@ -599,6 +870,8 @@ void HandleMessage(char* text) {
         ESP_LOGI(TAG, "recv type=%s id=%s", type, id);
     } else if (strcmp(type, "run") == 0) {
         HandleRun(root);
+    } else if (strcmp(type, "speak") == 0) {
+        HandleSpeak(root);
     } else if (strcmp(type, "cancel") == 0) {
         HandleCancel(root);
     } else {
@@ -636,8 +909,38 @@ bool ConnectWebSocket(uint32_t session) {
     }
 
     ws->OnData([session](const char* data, size_t len, bool binary) {
-        if (binary)
+        if (binary) {
+            if (!data || len == 0 || len > kMaxOpusPacketBytes)
+                return;
+            std::lock_guard<std::mutex> lock(s_speak_mutex);
+            if (!s_speak_collecting)
+                return;
+            if (s_speak_frames.size() >= kMaxSpeakFrames)
+                return;
+            if (s_speak_payload_bytes + len > kMaxSpeakBytes)
+                return;
+            s_speak_payload_bytes += len;
+            s_speak_frames.emplace_back(reinterpret_cast<const uint8_t*>(data),
+                                        reinterpret_cast<const uint8_t*>(data) + len);
             return;
+        }
+        static const char kSpeakType[] = "\"type\":\"speak\"";
+        bool looks_speak = false;
+        if (data && len >= sizeof(kSpeakType) - 1) {
+            for (size_t i = 0; i + sizeof(kSpeakType) - 1 <= len; ++i) {
+                if (memcmp(data + i, kSpeakType, sizeof(kSpeakType) - 1) == 0) {
+                    looks_speak = true;
+                    break;
+                }
+            }
+        }
+        if (looks_speak && !s_speak_active.load(std::memory_order_acquire) &&
+            !s_job_active.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lock(s_speak_mutex);
+            s_speak_collecting = true;
+            s_speak_frames.clear();
+            s_speak_payload_bytes = 0;
+        }
         IncomingMsg msg = {};
         msg.text = static_cast<char*>(malloc(len + 1));
         if (!msg.text)
@@ -699,6 +1002,12 @@ void AgentTask(void* arg) {
                 lua_runtime_stop(s_job_id);
                 FinishJobIfDone();
             }
+            if (s_speak_active.load(std::memory_order_acquire)) {
+                StopSpeakAudio();
+                s_speak_active.store(false, std::memory_order_release);
+                s_current_req_id[0] = '\0';
+                ResetSpeak();
+            }
             CloseWebSocket();
             SetSnap(ConnState::Connecting, "正在连接服务器", s_url);
             if (ConnectWebSocket(session)) {
@@ -726,6 +1035,7 @@ void AgentTask(void* arg) {
         }
         DrainQueue();
         FinishJobIfDone();
+        FinishSpeakIfReady();
 
         const int64_t now = esp_timer_get_time();
         if ((now - last_ping_us) / 1000 >= kPingIntervalMs) {
@@ -740,8 +1050,11 @@ void AgentTask(void* arg) {
 
     if (s_job_active.load(std::memory_order_acquire))
         lua_runtime_stop(s_job_id);
-    for (int i = 0; i < 80 && s_job_active.load(std::memory_order_acquire); ++i) {
+    for (int i = 0; i < 80 && (s_job_active.load(std::memory_order_acquire) ||
+                               s_speak_active.load(std::memory_order_acquire));
+         ++i) {
         FinishJobIfDone();
+        FinishSpeakIfReady();
         vTaskDelay(pdMS_TO_TICKS(20));
     }
     DrainQueue();

@@ -35,15 +35,15 @@ wss://max.sh.creativone.cn/api/device-ws/v1
 | `Client-Id` | 设备 UUID |
 | `Authorization` | 可选，`Bearer <token>` |
 
-只使用 **文本帧**。二进制帧会被设备忽略。单帧上限约 **80KiB**（Lua 源码上限 64KiB + JSON 包装）。
+控制消息使用 **JSON 文本帧**。`speak` 会紧随若干 **二进制帧**，每帧一个 Opus 包。单帧上限约 **80KiB**（Lua 源码上限 64KiB + JSON 包装）。
 
 ### 生命周期
 
 1. App 打开 → 连接 WebSocket
 2. 连接成功后设备立刻发送 `hello`，不必等服务端先说话
 3. 服务端可回 `hello_ok`（可选）
-4. 服务端随时发送 `run`
-5. 设备执行完回 `result`
+4. 服务端随时发送 `run` 或 `speak`
+5. 设备执行完 / 播完回 `result`
 6. 任一方可 `ping` / `pong`
 7. 服务端可用 `cancel` 取消当前任务
 8. App 关闭或断线时设备会停掉正在跑的 Lua 任务并断开
@@ -59,7 +59,7 @@ wss://max.sh.creativone.cn/api/device-ws/v1
 ```json
 {
   "v": 1,
-  "type": "hello | hello_ok | run | result | cancel | ping | pong | error",
+  "type": "hello | hello_ok | run | speak | result | cancel | ping | pong | error",
   "id": "字符串，请求/响应用同一 id"
 }
 ```
@@ -97,7 +97,7 @@ wss://max.sh.creativone.cn/api/device-ws/v1
       "max_code_bytes": 65536,
       "max_output_bytes": 4096,
       "max_result_bytes": 8192,
-      "capabilities": ["lua", "ui", "audio", "http", "speech", "device", "camera"]
+      "capabilities": ["lua", "ui", "audio", "http", "speech", "tts", "device", "camera"]
     }
   },
   "data": {
@@ -106,7 +106,7 @@ wss://max.sh.creativone.cn/api/device-ws/v1
     "boot_id": "<boot uuid>",
     "firmware_version": "1.2.3",
     "lua_runtime": "claw4",
-    "capabilities": ["lua", "ui", "audio", "http", "speech", "device", "camera"],
+    "capabilities": ["lua", "ui", "audio", "http", "speech", "tts", "device", "camera"],
     "limits": {
       "max_script_bytes": 65536,
       "max_params_bytes": 16384,
@@ -127,7 +127,7 @@ wss://max.sh.creativone.cn/api/device-ws/v1
 
 `system` 是设备已有的整机信息 JSON（分区、芯片、显示等），便于调试。CubeMax 用 `data.device_id`（Board UUID）登记设备。`protocol: "lua-agent"` 用来让 CubeMax 走 LAP，而不是旧的分片协议。
 
-当前固件会上报的 Lua 能力：`lua`、`ui`、`audio`、`http`、`speech`、`device`，有摄像头时还有 `camera`。`uart` 运行时存在，但本板未注册 UART 口，不要默认下发需要串口的脚本。`ui` / `audio` / `speech` / `device` 始终可用，不必在 `run.capabilities` 里声明；`http` 默认打开；`camera` 必须在对应 `run` 里声明。
+当前固件会上报的能力：`lua`、`ui`、`audio`、`http`、`speech`、`tts`、`device`，有摄像头时还有 `camera`。`uart` 运行时存在，但本板未注册 UART 口，不要默认下发需要串口的脚本。`ui` / `audio` / `speech` / `device` 始终可用，不必在 `run.capabilities` 里声明；`http` 默认打开；`camera` 必须在对应 `run` 里声明。`tts` 表示设备能直接接收 `speak` 音频并播放。
 
 ### 3.2 `hello_ok`（服务端 → 设备，可选）
 
@@ -194,6 +194,52 @@ end
 - 结果 JSON 超过 8KiB 时 `value` 为 `null`，且 `value_truncated: true`
 
 `print(...)` 会进入 `result.output`（最多 4KiB）。
+
+### 3.3.1 `speak`（服务端 → 设备，直接播报，不跑 Lua）
+
+工作流「语音播报」走这条路径。CubeMax 用通义千问合成 **WAV PCM**，在服务端重采样并编成 **16 kHz / 60 ms 裸 Opus 帧**，再通过当前这条 WebSocket 下发。设备走和小智对话相同的 Opus 解码队列播放，不执行 Lua。
+
+先发一条 JSON：
+
+```json
+{
+  "v": 1,
+  "type": "speak",
+  "id": "req-123",
+  "format": "opus",
+  "sample_rate": 16000,
+  "frame_duration": 60,
+  "frame_count": 42,
+  "volume": 80,
+  "wait": true,
+  "duration_ms": 2520
+}
+```
+
+随后立刻连续发送 **二进制帧**（不是 JSON），**一帧一个 Opus 包**，共 `frame_count` 个。这和小智语音通道的下行 Opus 帧相同，不是 Ogg 容器，也不是整段 WAV。
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `id` | 是 | 与随后的 `result` 相同 |
+| `format` | 是 | `"opus"` |
+| `sample_rate` | 否 | 默认 **16000**（8000 / 12000 / 16000 / 24000 / 48000） |
+| `frame_duration` | 否 | 默认 **60** ms（20 / 40 / 60） |
+| `frame_count` | 是 | 随后二进制帧个数，最大 **1200** |
+| `volume` | 否 | 0–100，默认 80；CubeMax 在编码 PCM 时已经乘过，设备不再二次调音 |
+| `wait` | 否 | `true`（默认）时等播完再回 `result` |
+
+设备播完（或拒绝）后用原来的 `result` 回复，`value` 形如 `{ "success": true, "durationMs": 2520 }`。`cancel` 的 `id` 与这次 `speak` 相同即可打断。
+
+和对话通道对比：
+
+| | 小智语音 WebSocket | CubeMax `speak`（远程脚本这条 WS） |
+|---|---|---|
+| 音频格式 | **Opus**，16 kHz，单声道，60 ms 一帧 | 相同：**裸 Opus**，16 kHz，60 ms 一帧 |
+| 发送方式 | JSON `type=tts` + 二进制 Opus 帧 | JSON `type=speak` + 二进制 Opus 帧 |
+| 谁合成 | 小智云 | CubeMax（通义千问 WAV → Opus） |
+| 设备做什么 | 解码 Opus 出喇叭 | 同一条 `PushPacketToDecodeQueue` 解码出喇叭 |
+
+设备 **不能** 在板上做 TTS。千问返回的 WAV / CosyVoice 的 Ogg Opus 都不能直接塞进解码队列。
 
 ### 3.4 `result`（设备 → 服务端）
 

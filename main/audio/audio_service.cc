@@ -708,7 +708,7 @@ bool AudioService::DecodeSoundEffect(const std::string_view& ogg, std::vector<in
             }
 
             // Audio packet (Opus)
-            static constexpr size_t kMaxEffectSamples = 48000 * 5;
+            static constexpr size_t kMaxEffectSamples = 48000 * 20;
             if (!decoder)
                 decoder = std::make_unique<OpusDecoderWrapper>(sample_rate, 1,
                                                                OPUS_FRAME_DURATION_MS);
@@ -734,6 +734,104 @@ bool AudioService::DecodeSoundEffect(const std::string_view& ogg, std::vector<in
         pcm = std::move(resampled);
     }
     return true;
+}
+
+bool AudioService::PlayWavSoundEffect(const void* data, size_t size, uint32_t handle,
+                                      uint8_t volume, bool loop) {
+    if (!data || size == 0)
+        return false;
+    auto decoded = std::make_shared<std::vector<int16_t>>();
+    if (!DecodeWavPcm(static_cast<const uint8_t*>(data), size, *decoded))
+        return false;
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    if (handle != 0 && sound_effects_.size() >= 4)
+        return false;
+    if (!codec_->output_enabled()) {
+        esp_timer_stop(audio_power_timer_);
+        esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+        codec_->EnableOutput(true);
+    }
+    sound_effects_.push_back(SoundEffect{
+        .handle = handle,
+        .volume = volume,
+        .loop = loop,
+        .pcm = std::move(decoded),
+    });
+    audio_queue_cv_.notify_all();
+    return true;
+}
+
+static uint16_t ReadU16le(const uint8_t* p) {
+    return static_cast<uint16_t>(p[0] | (static_cast<uint16_t>(p[1]) << 8));
+}
+
+static uint32_t ReadU32le(const uint8_t* p) {
+    return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+           (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+bool AudioService::DecodeWavPcm(const uint8_t* data, size_t size, std::vector<int16_t>& pcm) {
+    pcm.clear();
+    if (!data || size < 44)
+        return false;
+    if (std::memcmp(data, "RIFF", 4) != 0 || std::memcmp(data + 8, "WAVE", 4) != 0)
+        return false;
+
+    size_t offset = 12;
+    int channels = 1;
+    int sample_rate = 16000;
+    int bits = 16;
+    const uint8_t* samples = nullptr;
+    size_t sample_bytes = 0;
+
+    while (offset + 8 <= size) {
+        const uint8_t* chunk = data + offset;
+        uint32_t chunk_size = ReadU32le(chunk + 4);
+        if (offset + 8 + chunk_size > size)
+            break;
+        if (std::memcmp(chunk, "fmt ", 4) == 0 && chunk_size >= 16) {
+            uint16_t format = ReadU16le(chunk + 8);
+            if (format != 1)
+                return false;
+            channels = ReadU16le(chunk + 10);
+            sample_rate = static_cast<int>(ReadU32le(chunk + 12));
+            bits = ReadU16le(chunk + 22);
+            if (channels < 1 || channels > 2 || bits != 16 || sample_rate <= 0)
+                return false;
+        } else if (std::memcmp(chunk, "data", 4) == 0) {
+            samples = chunk + 8;
+            sample_bytes = chunk_size;
+            break;
+        }
+        offset += 8 + chunk_size + (chunk_size & 1);
+    }
+    if (!samples || sample_bytes < 2)
+        return false;
+
+    const size_t frame_bytes = static_cast<size_t>(channels) * 2;
+    const size_t frames = sample_bytes / frame_bytes;
+    static constexpr size_t kMaxEffectSamples = 48000 * 20;
+    if (frames == 0 || frames > kMaxEffectSamples)
+        return false;
+
+    pcm.resize(frames);
+    for (size_t i = 0; i < frames; ++i) {
+        const uint8_t* frame = samples + i * frame_bytes;
+        int32_t left = static_cast<int16_t>(ReadU16le(frame));
+        if (channels == 2) {
+            int32_t right = static_cast<int16_t>(ReadU16le(frame + 2));
+            left = (left + right) / 2;
+        }
+        pcm[i] = static_cast<int16_t>(left);
+    }
+    if (codec_ && sample_rate != codec_->output_sample_rate()) {
+        OpusResampler resampler;
+        resampler.Configure(sample_rate, codec_->output_sample_rate());
+        std::vector<int16_t> resampled(resampler.GetOutputSamples(pcm.size()));
+        resampler.Process(pcm.data(), pcm.size(), resampled.data());
+        pcm = std::move(resampled);
+    }
+    return !pcm.empty();
 }
 
 void AudioService::StopSoundEffect(uint32_t handle) {
