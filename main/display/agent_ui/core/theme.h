@@ -64,7 +64,8 @@ constexpr int Scale(int value) {
     return (value * kDisplayWidth + kRef / 2) / kRef;
 }
 
-constexpr int kStatusBarHeight = Scale(62);
+// Fangtang 480x800 uses a 40px bar; 720x720 keeps the 62px design height.
+constexpr int kStatusBarHeight = kDisplayWidth == 480 ? 40 : Scale(62);
 constexpr int kAppHeaderHeight = Scale(98);
 constexpr int kContentTop = kStatusBarHeight + kAppHeaderHeight;
 constexpr int kBottomActionBarHeight = Scale(132);
