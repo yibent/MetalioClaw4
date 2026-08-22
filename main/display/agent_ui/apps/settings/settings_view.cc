@@ -569,9 +569,9 @@ void BuildAboutPanel() {
     panels_ui::BuildAbout(
         s_ui.panel,
         panels_ui::AboutInfo{
-            .product = "AgentUI",
+            .product = "CubeOS",
             .version = description != nullptr ? description->version : "--",
-            .device = "MetalioClaw4 · ESP32-P4",
+            .device = "CubeCat-S",
             .display = DISPLAY_WIDTH == 480 ? "480 × 800" : "720 × 720",
         });
 }
@@ -681,38 +681,54 @@ lv_obj_t* SettingsView::Create() {
     AttachAppLifecycle(shell.root, SettingsLifecycleCallback);
 
     const auto& colors = Theme::Get().colors();
+    lv_obj_set_style_pad_top(shell.actions, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(shell.actions, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(shell.actions, 8, LV_PART_MAIN);
+    lv_obj_set_flex_align(shell.actions, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
     lv_obj_t* tab_bar = lv_obj_create(shell.actions);
     lv_obj_remove_style_all(tab_bar);
-    lv_obj_set_height(tab_bar, metrics::kBottomActionHeight);
+    lv_obj_set_height(tab_bar, LV_SIZE_CONTENT);
     lv_obj_set_flex_grow(tab_bar, 1);
-    lv_obj_set_style_bg_color(tab_bar, lv_color_hex(colors.raised), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(tab_bar, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(tab_bar, metrics::kRadiusControl, LV_PART_MAIN);
-    lv_obj_set_style_clip_corner(tab_bar, true, LV_PART_MAIN);
     lv_obj_set_flex_flow(tab_bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(tab_bar, LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_remove_flag(tab_bar, LV_OBJ_FLAG_SCROLLABLE);
 
+    const bool portrait = metrics::kDisplayHeight > metrics::kDisplayWidth;
+    const lv_font_t* tab_font =
+        portrait ? fonts::SmallBold() : fonts::MediumBold();
+    const int tab_pad_x = portrait ? 8 : 10;
+    const int tab_pad_y = portrait ? 8 : 10;
+    constexpr int kTabIndicatorHeight = 3;
+
     for (size_t i = 0; i < s_ui.tabs.size(); ++i) {
+        lv_point_t text_size{};
+        lv_text_get_size(&text_size, kTabLabels[i], tab_font, 0, 0, LV_COORD_MAX,
+                         LV_TEXT_FLAG_NONE);
         lv_obj_t* tab = controls::CreateButton(tab_bar);
         lv_obj_remove_style_all(tab);
-        lv_obj_set_height(tab, metrics::kBottomActionHeight);
-        lv_obj_set_flex_grow(tab, 1);
-        lv_obj_set_style_radius(tab, 12, LV_PART_MAIN);
+        lv_obj_set_size(tab, text_size.x + tab_pad_x * 2,
+                        text_size.y + tab_pad_y * 2 + kTabIndicatorHeight);
+        lv_obj_set_style_radius(tab, metrics::kRadiusSmall, LV_PART_MAIN);
         lv_obj_add_event_cb(tab, OnTabClicked, LV_EVENT_CLICKED,
                             reinterpret_cast<void*>(i));
 
         lv_obj_t* label = lv_label_create(tab);
         lv_label_set_text(label, kTabLabels[i]);
-        lv_obj_set_style_text_font(label, fonts::MediumBold(), LV_PART_MAIN);
-        lv_obj_center(label);
+        lv_obj_set_style_text_font(label, tab_font, LV_PART_MAIN);
+        lv_obj_align(label, LV_ALIGN_TOP_MID, 0, tab_pad_y);
 
         lv_obj_t* indicator = lv_obj_create(tab);
         lv_obj_remove_style_all(indicator);
-        lv_obj_set_size(indicator, LV_PCT(68), 4);
-        lv_obj_align(indicator, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_set_size(indicator, std::max<int>(12, static_cast<int>(text_size.x) * 3 / 5),
+                        kTabIndicatorHeight);
+        lv_obj_align(indicator, LV_ALIGN_BOTTOM_MID, 0, 0);
         lv_obj_set_style_bg_color(indicator, lv_color_hex(colors.accent),
                                  LV_PART_MAIN);
         lv_obj_set_style_bg_opa(indicator, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_radius(indicator, 1, LV_PART_MAIN);
         lv_obj_remove_flag(indicator, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_remove_flag(indicator, LV_OBJ_FLAG_CLICKABLE);
         s_ui.tabs[i] = tab;

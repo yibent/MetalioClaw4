@@ -91,11 +91,22 @@ lv_obj_t* CreateRangeRow(lv_obj_t* parent, const char* icon, const char* title,
                          const char* subtitle, int min_value, int max_value,
                          int value, lv_event_cb_t callback,
                          lv_obj_t** value_label) {
+    const bool portrait = metrics::kDisplayHeight > metrics::kDisplayWidth;
     lv_obj_t* row = controls::CreateRow(
-        parent, icon, title, subtitle, 104, controls::kSettingsRangeTitleWidth);
+        parent, icon, title, subtitle, portrait ? 128 : 104,
+        portrait ? 240 : controls::kSettingsRangeTitleWidth);
+    if (portrait) {
+        lv_obj_t* title_label = lv_obj_get_child(row, 1);
+        if (title_label != nullptr) {
+            lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 54, 16);
+        }
+    }
     controls::AddSlider(row, min_value, max_value, value, callback);
     *value_label = controls::AddValueLabel(
         row, "", controls::kSettingsRangeValueWidth);
+    if (portrait && *value_label != nullptr) {
+        lv_obj_align(*value_label, LV_ALIGN_TOP_RIGHT, 0, 16);
+    }
     return row;
 }
 

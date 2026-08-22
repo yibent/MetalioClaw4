@@ -217,9 +217,23 @@ ActionButtonParts AddBottomActionButton(
     if (bar == nullptr) return parts;
     const bool leading = lv_obj_get_child_count(bar) == 0;
     const auto& colors = Theme::Get().colors();
+    const int stacked_height = 12 + fonts::Icon()->line_height + 4 +
+                               fonts::SmallBold()->line_height + 8;
+    const bool stacked = metrics::kBottomActionHeight >= stacked_height;
     parts.root = CreateButton(bar);
     lv_obj_remove_style_all(parts.root);
-    lv_obj_set_size(parts.root, 72, metrics::kBottomActionHeight);
+    lv_obj_set_height(parts.root, metrics::kBottomActionHeight);
+    if (stacked) {
+        lv_obj_set_width(parts.root, 72);
+    } else {
+        lv_obj_set_width(parts.root, LV_SIZE_CONTENT);
+        lv_obj_set_style_min_width(parts.root, 64, LV_PART_MAIN);
+        lv_obj_set_style_pad_hor(parts.root, 8, LV_PART_MAIN);
+        lv_obj_set_flex_flow(parts.root, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(parts.root, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_column(parts.root, 6, LV_PART_MAIN);
+    }
     lv_obj_set_style_bg_opa(parts.root, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_bg_color(parts.root, lv_color_hex(colors.raised),
                               Selector(LV_PART_MAIN, LV_STATE_PRESSED));
@@ -237,7 +251,7 @@ ActionButtonParts AddBottomActionButton(
     lv_obj_set_style_text_font(parts.icon, fonts::Icon(), LV_PART_MAIN);
     lv_obj_set_style_text_color(
         parts.icon, lv_color_hex(danger ? colors.danger : colors.muted), LV_PART_MAIN);
-    lv_obj_align(parts.icon, LV_ALIGN_TOP_MID, 0, 12);
+    if (stacked) lv_obj_align(parts.icon, LV_ALIGN_TOP_MID, 0, 12);
     lv_obj_remove_flag(parts.icon, LV_OBJ_FLAG_CLICKABLE);
 
     parts.label = lv_label_create(parts.root);
@@ -245,7 +259,7 @@ ActionButtonParts AddBottomActionButton(
     lv_obj_set_style_text_font(parts.label, fonts::SmallBold(), LV_PART_MAIN);
     lv_obj_set_style_text_color(
         parts.label, lv_color_hex(danger ? colors.danger : colors.muted), LV_PART_MAIN);
-    lv_obj_align(parts.label, LV_ALIGN_BOTTOM_MID, 0, -8);
+    if (stacked) lv_obj_align(parts.label, LV_ALIGN_BOTTOM_MID, 0, -8);
     lv_obj_remove_flag(parts.label, LV_OBJ_FLAG_CLICKABLE);
     return parts;
 }
@@ -883,9 +897,15 @@ lv_obj_t* AddValueLabel(lv_obj_t* row, const char* text, int width) {
 lv_obj_t* AddSlider(lv_obj_t* row, int min_value, int max_value, int value,
                     lv_event_cb_t callback, int right_offset) {
     const auto& colors = Theme::Get().colors();
+    const bool portrait = metrics::kDisplayHeight > metrics::kDisplayWidth;
     lv_obj_t* slider = lv_slider_create(row);
-    lv_obj_set_size(slider, kSettingsRangeSliderWidth, 24);
-    lv_obj_align(slider, LV_ALIGN_RIGHT_MID, -right_offset, 0);
+    if (portrait) {
+        lv_obj_set_size(slider, LV_PCT(100), 24);
+        lv_obj_align(slider, LV_ALIGN_BOTTOM_MID, 0, -16);
+    } else {
+        lv_obj_set_size(slider, kSettingsRangeSliderWidth, 24);
+        lv_obj_align(slider, LV_ALIGN_RIGHT_MID, -right_offset, 0);
+    }
     lv_slider_set_range(slider, min_value, max_value);
     lv_slider_set_value(slider, value, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(slider, lv_color_hex(colors.border), LV_PART_MAIN);
